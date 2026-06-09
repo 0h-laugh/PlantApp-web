@@ -1,32 +1,98 @@
-/* PlantApp v1.0 — logika aplikacji. Wszystkie dane lokalnie (localStorage). */
+/* PlantApp v1.1 — dziennik per roślina, Doktor przypisany do rośliny, ewolucja w czasie. */
 "use strict";
 
 // ============ STAN ============
 const store = {
   get plants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); },
-  set plants(v) { localStorage.setItem("pa_plants", JSON.stringify(v)); },
+  set plants(v) {
+    try { localStorage.setItem("pa_plants", JSON.stringify(v)); }
+    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub zrób eksport"); }
+    window.dispatchEvent(new CustomEvent("pa:change"));
+  },
   get apiKey() { return localStorage.getItem("pa_apikey") || ""; },
   set apiKey(v) { localStorage.setItem("pa_apikey", v); },
+  get usage() {
+    const u = JSON.parse(localStorage.getItem("pa_usage") || "{}");
+    const today = new Date().toISOString().slice(0, 10);
+    return u.date === today ? u : { date: today, identify: 0, diseases: 0, remaining: null };
+  },
+  set usage(v) { localStorage.setItem("pa_usage", JSON.stringify(v)); },
 };
+
+const DAILY_QUOTA = 500;
+function bumpUsage(kind, remaining) {
+  const u = store.usage;
+  u[kind] = (u[kind] || 0) + 1;
+  if (typeof remaining === "number") u.remaining = remaining;
+  store.usage = u;
+  renderUsage();
+}
+function renderUsage() {
+  const u = store.usage;
+  const used = (u.identify || 0) + (u.diseases || 0);
+  const left = typeof u.remaining === "number" ? u.remaining : Math.max(0, DAILY_QUOTA - used);
+  const exact = typeof u.remaining === "number";
+  const txt = `Pozostało dziś: ${exact ? "" : "~"}${left}/${DAILY_QUOTA} zapytań AI`;
+  const cls = left <= 25 ? " usage-low" : "";
+  const el1 = $("#scan-usage"), el2 = $("#doctor-usage"), el3 = $("#usage-card-body");
+  if (el1) { el1.textContent = txt; el1.className = "usage-line" + cls; }
+  if (el2) { el2.textContent = txt; el2.className = "usage-line" + cls; }
+  if (el3) el3.innerHTML = `
+    <div class="usage-grid">
+      <div><div class="usage-num">${u.identify || 0}</div><div class="usage-k">skany gatunków</div></div>
+      <div><div class="usage-num">${u.diseases || 0}</div><div class="usage-k">diagnozy AI</div></div>
+      <div><div class="usage-num${cls ? " usage-low" : ""}">${exact ? "" : "~"}${left}</div><div class="usage-k">pozostało dziś</div></div>
+    </div>
+    <p class="muted small">Limit darmowy PlantNet: ${DAILY_QUOTA} zapytań dziennie (skany + diagnozy łącznie). ${exact ? "Wartość potwierdzona przez serwer." : "Szacunek lokalny — doprecyzuje się po pierwszym zapytaniu."} Tryb „Po objawach” i cała pielęgnacja nie zużywają limitu.</p>`;
+}
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const DAY = 86400000;
 
-function isSummer() { const m = new Date().getMonth() + 1; return m >= 4 && m <= 9; } // IV–IX sezon wzrostu
+function isSummer() { const m = new Date().getMonth() + 1; return m >= 4 && m <= 9; }
+function fmtDate(t) { return new Date(t).toLocaleDateString("pl-PL", { day: "numeric", month: "short", year: new Date(t).getFullYear() !== new Date().getFullYear() ? "numeric" : undefined }); }
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+
+// ============ MIGRACJA v1.0 → v1.1 (history → journal) ============
+(function migrate() {
+  const plants = store.plants;
+  let changed = false;
+  plants.forEach(p => {
+    if (!p.journal) {
+      p.journal = [{ t: p.added || Date.now(), type: "added" }];
+      (p.history || []).forEach(t => p.journal.push({ t, type: "water" }));
+      delete p.history;
+      changed = true;
+    }
+  });
+  if (changed) store.plants = plants;
+})();
+
+// ============ DZIENNIK ============
+function addJournal(plantId, entry) {
+  const plants = store.plants;
+  const p = plants.find(x => x.id === plantId);
+  if (!p) return false;
+  p.journal = p.journal || [];
+  p.journal.push({ t: Date.now(), ...entry });
+  p.updatedAt = Date.now();
+  if (entry.type === "water") p.lastWatered = entry.t || Date.now();
+  if (entry.type === "fert") p.lastFertilized = entry.t || Date.now();
+  store.plants = plants;
+  return true;
 }
 
 // ============ BAZA PIELĘGNACJI ============
 function careFor(latinName) {
   if (!latinName) return CARE_DEFAULT;
   const lower = latinName.toLowerCase();
-  for (const key of Object.keys(CARE_DB)) {
-    if (lower.includes(key)) return CARE_DB[key];
-  }
+  for (const key of Object.keys(CARE_DB)) if (lower.includes(key)) return CARE_DB[key];
   return CARE_DEFAULT;
 }
 function currentInterval(plant) {
@@ -36,8 +102,16 @@ function currentInterval(plant) {
 }
 function daysUntilWater(plant) {
   const last = plant.lastWatered || plant.added;
-  const due = last + currentInterval(plant) * DAY;
-  return Math.ceil((due - Date.now()) / DAY);
+  return Math.ceil((last + currentInterval(plant) * DAY - Date.now()) / DAY);
+}
+const FERT_INTERVAL = 30; // dni, tylko w sezonie wzrostu
+function daysUntilFert(plant) {
+  if (!isSummer()) return null; // zima = przerwa w nawożeniu
+  const last = plant.lastFertilized || plant.added;
+  return Math.ceil((last + FERT_INTERVAL * DAY - Date.now()) / DAY);
+}
+function lastDiagnosis(plant) {
+  return (plant.journal || []).filter(e => e.type === "diagnosis").slice(-1)[0] || null;
 }
 
 // ============ NAWIGACJA ============
@@ -47,6 +121,7 @@ function goto(view) {
   $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === view));
   window.scrollTo(0, 0);
   if (view === "plants") renderPlants();
+  if (view === "doctor") renderDoctorPlantPicker();
   if (view === "scan" || view === "doctor") updateKeyWarnings();
 }
 document.addEventListener("click", (e) => {
@@ -54,22 +129,20 @@ document.addEventListener("click", (e) => {
   if (g) { e.preventDefault(); goto(g.dataset.goto); }
 });
 
-// ============ PIERŚCIEŃ PODLEWANIA (sygnatura) ============
+// ============ PIERŚCIEŃ PODLEWANIA ============
 function ringSVG(plant, size = 54) {
   const interval = currentInterval(plant);
   const daysLeft = daysUntilWater(plant);
   const frac = Math.max(0, Math.min(1, daysLeft / interval));
   const r = (size / 2) - 4, c = 2 * Math.PI * r;
   const overdue = daysLeft <= 0;
-  const label = overdue ? "💧" : daysLeft;
-  const sub = overdue ? "" : (daysLeft === 1 ? "dzień" : "dni");
   return `<div class="ring" style="width:${size}px;height:${size}px" role="img" aria-label="Podlewanie za ${daysLeft} dni">
     <svg width="${size}" height="${size}">
       <circle class="ring-track" cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke-width="5"/>
       <circle class="ring-fill ${overdue ? "overdue" : ""}" cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke-width="5"
         stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - frac)}"/>
     </svg>
-    <div class="ring-label">${label}<small>${sub}</small></div>
+    <div class="ring-label">${overdue ? "💧" : daysLeft}<small>${overdue ? "" : (daysLeft === 1 ? "dzień" : "dni")}</small></div>
   </div>`;
 }
 
@@ -81,45 +154,60 @@ function renderPlants() {
   empty.classList.toggle("hidden", plants.length > 0);
 
   const due = plants.filter(p => daysUntilWater(p) <= 0);
-  if (due.length) {
+  const fertDue = plants.filter(p => { const f = daysUntilFert(p); return f !== null && f <= 0; });
+  if (due.length || fertDue.length) {
     banner.classList.remove("hidden");
-    banner.innerHTML = `💧 <strong>${due.length === 1 ? "1 roślina czeka" : due.length + " rośliny czekają"} na podlanie:</strong> ${due.map(p => p.name).join(", ")}`;
+    banner.innerHTML = (due.length ? `💧 <strong>${due.length === 1 ? "1 roślina czeka" : due.length + " rośliny czekają"} na podlanie:</strong> ${due.map(p => esc(p.name)).join(", ")}` : "")
+      + (due.length && fertDue.length ? "<br>" : "")
+      + (fertDue.length ? `🌿 <strong>Do nawiezienia:</strong> ${fertDue.map(p => esc(p.name)).join(", ")}` : "");
   } else banner.classList.add("hidden");
 
-  plants
-    .slice()
-    .sort((a, b) => daysUntilWater(a) - daysUntilWater(b))
-    .forEach(p => {
-      const d = daysUntilWater(p);
-      const el = document.createElement("div");
-      el.className = "plant-card";
-      el.innerHTML = `
-        ${p.photo ? `<img class="plant-photo" src="${p.photo}" alt="">` : `<div class="plant-photo">🪴</div>`}
-        <div class="plant-info">
-          <div class="plant-name">${esc(p.name)}</div>
-          <div class="plant-species">${esc(p.latin || "gatunek nieznany")}</div>
-          <div class="plant-due ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "Podlej dzisiaj!" : "Podlewanie za " + d + " " + (d === 1 ? "dzień" : "dni")}</div>
-        </div>
-        ${ringSVG(p)}`;
-      el.addEventListener("click", () => openDetail(p.id));
-      list.appendChild(el);
-    });
+  plants.slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b)).forEach(p => {
+    const d = daysUntilWater(p);
+    const f = daysUntilFert(p);
+    const diag = lastDiagnosis(p);
+    const recentDiag = diag && (Date.now() - diag.t) < 21 * DAY;
+    const el = document.createElement("div");
+    el.className = "plant-card";
+    el.innerHTML = `
+      ${p.photo ? `<img class="plant-photo" src="${p.photo}" alt="">` : `<div class="plant-photo">🪴</div>`}
+      <div class="plant-info">
+        <div class="plant-name">${esc(p.name)}</div>
+        <div class="plant-species">${esc(p.latin || "gatunek nieznany")}</div>
+        <div class="plant-due ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "Podlej dzisiaj!" : "Podlewanie za " + d + " " + (d === 1 ? "dzień" : "dni")}${f !== null && f <= 0 ? ` <span class="fert-due">· 🌿 nawóź</span>` : ""}</div>
+        ${recentDiag ? `<div class="plant-diag">🩺 ${esc(diag.name)} · ${fmtDate(diag.t)}</div>` : ""}
+      </div>
+      ${ringSVG(p)}`;
+    el.addEventListener("click", () => openDetail(p.id));
+    list.appendChild(el);
+  });
 
   $("#season-badge").textContent = isSummer() ? "☀️ sezon wzrostu" : "❄️ spoczynek zimowy";
 }
 
-function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+// ============ SZCZEGÓŁY ROŚLINY: dziennik + ewolucja ============
+const JOURNAL_META = {
+  added: { ico: "🌱", label: () => "Dodano do kolekcji" },
+  water: { ico: "💧", label: () => "Podlano" },
+  fert: { ico: "🌿", label: () => "Nawożono" },
+  diagnosis: { ico: "🩺", label: e => `Diagnoza: ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
+  photo: { ico: "📷", label: () => "Zdjęcie" },
+  note: { ico: "📝", label: e => esc(e.text) },
+};
 
-// ============ SZCZEGÓŁY ROŚLINY ============
-let detailId = null;
 function openDetail(id) {
-  detailId = id;
   const p = store.plants.find(x => x.id === id);
   if (!p) return;
   const care = careFor(p.latin);
   const d = daysUntilWater(p);
+  const fert = daysUntilFert(p);
   const interval = currentInterval(p);
-  const hist = (p.history || []).slice(-5).reverse();
+  const journal = (p.journal || []).slice().sort((a, b) => b.t - a.t);
+
+  // ewolucja: wszystkie zdjęcia w czasie (start + dziennik), chronologicznie
+  const evoPhotos = [];
+  if (p.photo) evoPhotos.push({ t: p.added, photo: p.photo, tag: "start" });
+  (p.journal || []).filter(e => e.photo).sort((a, b) => a.t - b.t).forEach(e => evoPhotos.push({ t: e.t, photo: e.photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
 
   $("#plant-detail-content").innerHTML = `
     <div class="detail-hero">
@@ -140,8 +228,31 @@ function openDetail(id) {
       </div>
     </div>
 
+    <div class="fert-block">
+      <div class="fert-ico">🌿</div>
+      <div style="flex:1">
+        <div style="font-weight:700;font-size:.92rem">${fert === null ? "Nawożenie: przerwa zimowa" : fert <= 0 ? "Czas nawieźć!" : "Nawożenie za " + fert + " " + (fert === 1 ? "dzień" : "dni")}</div>
+        <div class="muted" style="font-size:.78rem">${fert === null ? "Wznowisz w kwietniu — rośliny zimą odpoczywają." : "co " + FERT_INTERVAL + " dni w sezonie wzrostu"}</div>
+      </div>
+      ${fert !== null ? `<button class="btn btn-ghost" id="fert-now" style="padding:9px 14px">🌿 Nawiozłem/am</button>` : ""}
+    </div>
+
+    <div class="action-row">
+      <label class="btn btn-ghost" for="journal-photo-file">📷 Zdjęcie do dziennika<input type="file" id="journal-photo-file" accept="image/*" capture="environment" hidden></label>
+      <button class="btn btn-ghost" id="add-note">📝 Notatka</button>
+      <button class="btn btn-ghost" id="diagnose-this" data-goto="doctor">🩺 Diagnozuj</button>
+    </div>
+
+    ${evoPhotos.length > 1 ? `
     <div class="card">
-      <div class="k muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Częstotliwość podlewania</div>
+      <div class="sec-k">🌿 Ewolucja (${evoPhotos.length} zdjęć)</div>
+      <div class="evo-strip">${evoPhotos.map(e => `
+        <figure class="evo-item"><img src="${e.photo}" alt="" loading="lazy"><figcaption>${fmtDate(e.t)}${e.tag === "start" ? " · start" : e.tag ? " " + e.tag : ""}</figcaption></figure>`).join("")}
+      </div>
+    </div>` : ""}
+
+    <div class="card">
+      <div class="sec-k">Częstotliwość podlewania</div>
       <div class="interval-row">
         <button id="int-minus" aria-label="Rzadziej">−</button>
         <span class="interval-val">co ${interval} dni</span>
@@ -154,24 +265,56 @@ function openDetail(id) {
       <div class="care-cell"><div class="k">☀️ Światło</div><div class="v">${esc(care.light)}</div></div>
       <div class="care-cell"><div class="k">💨 Wilgotność</div><div class="v">${esc(care.humidity)}</div></div>
     </div>
-    <div class="card"><div class="k muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">💡 Wskazówki</div><div style="font-size:.9rem;line-height:1.55">${esc(care.tips)}</div></div>
+    <div class="card"><div class="sec-k">💡 Wskazówki</div><div style="font-size:.9rem;line-height:1.55">${esc(care.tips)}</div></div>
 
-    ${hist.length ? `<div class="card"><div class="k muted" style="font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px">Ostatnie podlewania</div><ul class="history">${hist.map(h => `<li>${new Date(h).toLocaleDateString("pl-PL", { day: "numeric", month: "long" })}</li>`).join("")}</ul></div>` : ""}
+    <div class="card">
+      <div class="sec-k">📖 Dziennik (${journal.length})</div>
+      ${journal.length ? `<div class="timeline">${journal.map((e, i) => {
+        const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
+        return `<div class="tl-entry">
+          <div class="tl-ico">${m.ico}</div>
+          <div class="tl-body">
+            <div class="tl-label">${m.label(e)}</div>
+            <div class="tl-date">${fmtDate(e.t)}</div>
+            ${e.photo && e.type !== "photo" ? `<img class="tl-thumb" src="${e.photo}" alt="" loading="lazy">` : ""}
+          </div>
+          <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
+        </div>`;
+      }).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
+    </div>
 
     <button class="btn btn-danger btn-block" id="delete-plant">Usuń roślinę</button>
   `;
 
-  $("#water-now").onclick = () => {
-    mutatePlant(id, p => { p.lastWatered = Date.now(); p.history = [...(p.history || []), Date.now()].slice(-30); });
-    toast("💧 Zapisano podlewanie");
-    openDetail(id);
+  $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
+  const fertBtn = $("#fert-now");
+  if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
+  $("#add-note").onclick = () => {
+    const text = prompt("Notatka (np. „przesadzona do większej doniczki”):");
+    if (text && text.trim()) { addJournal(id, { type: "note", text: text.trim() }); openDetail(id); }
   };
+  $("#journal-photo-file").addEventListener("change", async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const photo = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
+    addJournal(id, { type: "photo", photo });
+    toast("📷 Dodano do dziennika"); openDetail(id);
+  });
+  $("#diagnose-this").addEventListener("click", () => { doctorPlantId = id; }, { capture: true });
   $("#int-minus").onclick = () => { mutatePlant(id, p => p.customInterval = Math.max(1, currentInterval(p) - 1)); openDetail(id); };
   $("#int-plus").onclick = () => { mutatePlant(id, p => p.customInterval = currentInterval(p) + 1); openDetail(id); };
   const reset = $("#int-reset"); if (reset) reset.onclick = () => { mutatePlant(id, p => delete p.customInterval); openDetail(id); };
+  $$("#plant-detail-content .tl-del").forEach(btn => btn.onclick = () => {
+    mutatePlant(id, p => {
+      const sorted = p.journal.slice().sort((a, b) => b.t - a.t);
+      const victim = sorted[Number(btn.dataset.del)];
+      p.journal = p.journal.filter(e => e !== victim);
+    });
+    openDetail(id);
+  });
   $("#delete-plant").onclick = () => {
-    if (confirm(`Usunąć „${p.name}" z kolekcji?`)) {
+    if (confirm(`Usunąć „${p.name}" razem z dziennikiem?`)) {
       store.plants = store.plants.filter(x => x.id !== id);
+      window.dispatchEvent(new CustomEvent("pa:delete", { detail: id }));
       toast("Usunięto"); goto("plants");
     }
   };
@@ -181,10 +324,10 @@ function openDetail(id) {
 function mutatePlant(id, fn) {
   const plants = store.plants;
   const p = plants.find(x => x.id === id);
-  if (p) { fn(p); store.plants = plants; }
+  if (p) { fn(p); p.updatedAt = Date.now(); store.plants = plants; }
 }
 
-// ============ ZDJĘCIA: kompresja do ~1280px JPEG ============
+// ============ ZDJĘCIA ============
 function fileToCompressed(file, maxDim = 1280, quality = 0.85) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -204,7 +347,7 @@ function blobToDataURL(blob) {
   return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(blob); });
 }
 
-// ============ SKANOWANIE — Pl@ntNet identify ============
+// ============ SKANUJ — Pl@ntNet identify ============
 let scanBlob = null, scanThumb = null, organ = "auto";
 
 $("#scan-file").addEventListener("change", async (e) => {
@@ -233,26 +376,25 @@ $("#scan-go").addEventListener("click", async () => {
     fd.append("organs", organ);
     const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${encodeURIComponent(store.apiKey)}&lang=pl&nb-results=4`;
     const res = await fetch(url, { method: "POST", body: fd });
-    if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź go w Ustawieniach.");
-    if (res.status === 404) throw new Error("Nie rozpoznano rośliny na zdjęciu. Spróbuj wyraźniejszego zdjęcia liścia lub kwiatu.");
-    if (res.status === 429) throw new Error("Wyczerpany dzienny limit darmowych rozpoznań (500/dzień). Spróbuj jutro.");
-    if (!res.ok) throw new Error("Błąd serwera Pl@ntNet (" + res.status + "). Spróbuj ponownie.");
+    if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź klucz i Authorized domains w panelu PlantNet.");
+    if (res.status === 404) throw new Error("Nie rozpoznano rośliny. Spróbuj wyraźniejszego zdjęcia liścia lub kwiatu.");
+    if (res.status === 429) throw new Error("Wyczerpany dzienny limit (500/dzień). Spróbuj jutro.");
+    if (!res.ok) throw new Error("Błąd serwera Pl@ntNet (" + res.status + ").");
     const data = await res.json();
+    bumpUsage("identify", data.remainingIdentificationRequests);
     renderScanResults(data.results || []);
     st.classList.add("hidden");
   } catch (err) {
     st.classList.add("error");
     st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — identyfikacja wymaga połączenia.";
-  } finally {
-    $("#scan-go").disabled = false;
-  }
+  } finally { $("#scan-go").disabled = false; }
 });
 
 function renderScanResults(results) {
   const box = $("#scan-results");
   if (!results.length) { box.innerHTML = `<div class="status error">Brak dopasowań. Spróbuj zdjęcia z bliska, na jednolitym tle.</div>`; return; }
   box.innerHTML = "";
-  results.slice(0, 4).forEach((r, i) => {
+  results.slice(0, 4).forEach(r => {
     const latin = r.species?.scientificNameWithoutAuthor || "?";
     const common = (r.species?.commonNames || [])[0] || "";
     const score = Math.round((r.score || 0) * 100);
@@ -266,12 +408,10 @@ function renderScanResults(results) {
         <span class="score-pill ${score >= 50 ? "score-high" : "score-mid"}">${score}%</span>
       </div>
       <div class="result-body">
-        ${known ? `💧 Podlewanie co ~${isSummer() ? care.waterSummer : care.waterWinter} dni · ${care.toxic ? "⚠️ toksyczna" : care.toxic === false ? "✓ bezpieczna dla zwierząt" : ""}` : "Brak w bazie pielęgnacji — dodam z ogólnym planem podlewania, dostroisz ręcznie."}
+        ${known ? `💧 Podlewanie co ~${isSummer() ? care.waterSummer : care.waterWinter} dni · ${care.toxic ? "⚠️ toksyczna" : care.toxic === false ? "✓ bezpieczna dla zwierząt" : ""}` : "Brak w bazie pielęgnacji — dodam z ogólnym planem, dostroisz ręcznie."}
       </div>
-      <div class="result-actions">
-        <button class="btn btn-primary" data-add="${i}">＋ Dodaj do kolekcji</button>
-      </div>`;
-    card.querySelector("[data-add]").onclick = () => addPlant(latin, care.pl || common || latin);
+      <div class="result-actions"><button class="btn btn-primary">＋ Dodaj do kolekcji</button></div>`;
+    card.querySelector(".btn-primary").onclick = () => addPlant(latin, care.pl || common || latin);
     box.appendChild(card);
   });
 }
@@ -279,7 +419,7 @@ function renderScanResults(results) {
 function addPlant(latin, displayName) {
   const name = prompt("Nazwa rośliny (np. „Monstera w salonie”):", displayName) || displayName;
   const plants = store.plants;
-  plants.push({ id: uid(), name, latin, photo: scanThumb, added: Date.now(), lastWatered: Date.now(), history: [] });
+  plants.push({ id: uid(), name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
@@ -288,8 +428,21 @@ function addPlant(latin, displayName) {
   goto("plants");
 }
 
-// ============ DOKTOR — Pl@ntNet diseases + objawy ============
-let doctorBlob = null;
+// ============ DOKTOR — wybór rośliny + zapis do dziennika ============
+let doctorBlob = null, doctorThumb = null, doctorPlantId = null;
+
+function renderDoctorPlantPicker() {
+  const plants = store.plants;
+  const box = $("#doctor-plant-chips");
+  if (!plants.length) { box.innerHTML = `<span class="muted small">Brak roślin w kolekcji — diagnoza nie zapisze się do dziennika.</span>`; doctorPlantId = null; return; }
+  if (doctorPlantId && !plants.find(p => p.id === doctorPlantId)) doctorPlantId = null;
+  box.innerHTML = plants.map(p => `<button class="chip ${p.id === doctorPlantId ? "active" : ""}" data-plant="${p.id}">${esc(p.name)}</button>`).join("")
+    + `<button class="chip ${doctorPlantId === null ? "active" : ""}" data-plant="">bez zapisu</button>`;
+  $$("#doctor-plant-chips .chip").forEach(c => c.onclick = () => {
+    doctorPlantId = c.dataset.plant || null;
+    renderDoctorPlantPicker();
+  });
+}
 
 $$(".seg-btn").forEach(b => b.addEventListener("click", () => {
   $$(".seg-btn").forEach(x => x.classList.remove("active"));
@@ -301,6 +454,7 @@ $$(".seg-btn").forEach(b => b.addEventListener("click", () => {
 $("#doctor-file").addEventListener("change", async (e) => {
   const f = e.target.files[0]; if (!f) return;
   doctorBlob = await fileToCompressed(f);
+  doctorThumb = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
   $("#doctor-preview").innerHTML = `<img src="${URL.createObjectURL(doctorBlob)}" alt="Podgląd zdjęcia">`;
   $("#doctor-go").disabled = !store.apiKey;
   $("#doctor-results").innerHTML = "";
@@ -317,20 +471,29 @@ $("#doctor-go").addEventListener("click", async () => {
     fd.append("image", doctorBlob, "photo.jpg");
     const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${encodeURIComponent(store.apiKey)}&lang=pl`;
     const res = await fetch(url, { method: "POST", body: fd });
-    if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź go w Ustawieniach.");
-    if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia samej zmiany — albo użyj trybu „Po objawach”.");
-    if (res.status === 429) throw new Error("Wyczerpany dzienny limit zapytań. Spróbuj jutro lub użyj trybu „Po objawach”.");
+    if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź panel PlantNet.");
+    if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia zmiany — albo trybu „Po objawach”.");
+    if (res.status === 429) throw new Error("Limit dzienny wyczerpany. Użyj trybu „Po objawach”.");
     if (!res.ok) throw new Error("Błąd serwera Pl@ntNet (" + res.status + ").");
     const data = await res.json();
+    bumpUsage("diseases", data.remainingIdentificationRequests);
     renderDoctorResults(data.results || []);
     st.classList.add("hidden");
   } catch (err) {
     st.classList.add("error");
-    st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — użyj trybu „Po objawach” (działa offline).";
-  } finally {
-    $("#doctor-go").disabled = false;
-  }
+    st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — użyj trybu „Po objawach” (offline).";
+  } finally { $("#doctor-go").disabled = false; }
 });
+
+function saveDiagnosis(name, score, src) {
+  if (!doctorPlantId) { toast("Wybierz roślinę u góry, żeby zapisać do dziennika"); return false; }
+  const ok = addJournal(doctorPlantId, { type: "diagnosis", name, score, src, photo: src === "ai" ? doctorThumb : undefined });
+  if (ok) {
+    const p = store.plants.find(x => x.id === doctorPlantId);
+    toast(`🩺 Zapisano w dzienniku: ${p.name}`);
+  }
+  return ok;
+}
 
 function renderDoctorResults(results) {
   const box = $("#doctor-results");
@@ -349,20 +512,30 @@ function renderDoctorResults(results) {
         <span class="score-pill ${score >= 50 ? "score-high" : "score-mid"}">${score}%</span>
       </div>
       <div class="result-body">
-        ${known ? `<strong>Jak rozpoznać:</strong> ${esc(known.what)}<br><br><strong>Co robić:</strong> ${esc(known.action)}` : `Kod EPPO: ${esc(code)}. Brak szczegółów w lokalnej bazie — wyszukaj kod, by dowiedzieć się więcej.`}
-      </div>`;
+        ${known ? `<strong>Jak rozpoznać:</strong> ${esc(known.what)}<br><br><strong>Co robić:</strong> ${esc(known.action)}` : `Kod EPPO: ${esc(code)}. Brak szczegółów w lokalnej bazie.`}
+      </div>
+      <div class="result-actions"><button class="btn btn-primary">📖 Zapisz do dziennika</button></div>`;
+    card.querySelector(".btn-primary").onclick = (ev) => { if (saveDiagnosis(displayName, score, "ai")) ev.target.disabled = true, ev.target.textContent = "✓ Zapisano"; };
     box.appendChild(card);
   });
-  box.insertAdjacentHTML("beforeend", `<p class="muted small">Diagnoza AI jest orientacyjna — przy poważnym porażeniu porównaj z trybem „Po objawach” i obserwuj roślinę przez kilka dni.</p>`);
+  box.insertAdjacentHTML("beforeend", `<p class="muted small">Diagnoza AI jest orientacyjna — obserwuj roślinę i porównaj z trybem „Po objawach”.</p>`);
 }
 
-// objawowy — offline
+// objawowy — offline, też z zapisem
 function renderSymptoms() {
-  $("#symptoms-list").innerHTML = SYMPTOMS_DB.map(s => `
+  $("#symptoms-list").innerHTML = SYMPTOMS_DB.map((s, i) => `
     <details class="symptom">
       <summary>${esc(s.label)}</summary>
-      <div class="symptom-body"><strong>Prawdopodobna przyczyna:</strong> ${esc(s.causes)}<br><br><strong>Co robić:</strong> ${esc(s.action)}</div>
+      <div class="symptom-body">
+        <strong>Prawdopodobna przyczyna:</strong> ${esc(s.causes)}<br><br>
+        <strong>Co robić:</strong> ${esc(s.action)}
+        <div class="result-actions"><button class="btn btn-ghost" data-sym="${i}">📖 Zapisz do dziennika</button></div>
+      </div>
     </details>`).join("");
+  $$("#symptoms-list [data-sym]").forEach(b => b.onclick = () => {
+    const s = SYMPTOMS_DB[Number(b.dataset.sym)];
+    if (saveDiagnosis(s.label, null, "objawy")) { b.disabled = true; b.textContent = "✓ Zapisano"; }
+  });
 }
 
 // ============ USTAWIENIA ============
@@ -382,7 +555,7 @@ $("#save-key").addEventListener("click", () => {
 });
 
 $("#export-btn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ plants: store.plants, exported: new Date().toISOString() }, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ plants: store.plants, exported: new Date().toISOString(), version: "1.1" }, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "plantapp-backup-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -418,15 +591,22 @@ function checkDueAndNotify() {
         icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: "watering"
       }));
       localStorage.setItem("pa_notified", today);
-    } catch { /* powiadomienie nieobsługiwane */ }
+    } catch { /* brak wsparcia */ }
   }
 }
 
 // ============ START ============
 function init() {
+  const intro = $("#leaf-intro");
+  if (intro) {
+    if (sessionStorage.getItem("pa_intro")) intro.classList.add("skip");
+    else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
+  }
   $("#api-key").value = store.apiKey;
   renderSymptoms();
   renderPlants();
+  renderDoctorPlantPicker();
+  renderUsage();
   updateKeyWarnings();
   checkDueAndNotify();
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});

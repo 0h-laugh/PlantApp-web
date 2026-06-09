@@ -1,6 +1,6 @@
 /* PlantApp service worker — app shell offline (cache-first), API zawsze z sieci. */
-const CACHE = "plantapp-v1";
-const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./care-db.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
+const CACHE = "plantapp-v5";
+const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./care-db.js", "./config.js", "./cloud.js", "./vendor/supabase.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

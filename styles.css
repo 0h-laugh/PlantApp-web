@@ -212,3 +212,77 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; }
   padding: 11px 18px; border-radius: 999px; z-index: 50; max-width: 90vw; text-align: center;
 }
 .hidden { display: none !important; }
+
+/* ---------- v1.1: dziennik, ewolucja, picker ---------- */
+.picker-block { margin-bottom: 14px; }
+.action-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.action-row .btn { flex: 1; min-width: 130px; font-size: .85rem; padding: 11px 10px; }
+.sec-k { font-size: .75rem; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px; font-weight: 700; }
+
+.evo-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scroll-snap-type: x mandatory; }
+.evo-item { flex: none; scroll-snap-align: start; margin: 0; }
+.evo-item img { width: 110px; height: 110px; object-fit: cover; border-radius: 12px; border: 1px solid var(--card-edge); display: block; }
+.evo-item figcaption { font-size: .68rem; color: var(--ink-dim); margin-top: 4px; text-align: center; }
+
+.timeline { display: flex; flex-direction: column; }
+.tl-entry { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--card-edge); align-items: flex-start; }
+.tl-entry:last-child { border-bottom: 0; }
+.tl-ico { flex: none; width: 32px; height: 32px; border-radius: 10px; background: var(--bg-soft); display: grid; place-items: center; font-size: .95rem; }
+.tl-body { flex: 1; min-width: 0; }
+.tl-label { font-size: .88rem; line-height: 1.4; }
+.tl-date { font-size: .72rem; color: var(--ink-dim); margin-top: 2px; }
+.tl-thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; margin-top: 8px; border: 1px solid var(--card-edge); }
+.tl-del { flex: none; border: 0; background: none; color: var(--ink-dim); font-size: .85rem; cursor: pointer; padding: 4px 6px; }
+.tl-del:hover { color: var(--danger); }
+.plant-diag { font-size: .76rem; color: var(--ink-dim); margin-top: 3px; }
+
+/* ---------- v1.2: usage, nawożenie, QR ---------- */
+.usage-line { text-align: center; font-size: .78rem; color: var(--ink-dim); margin-top: 8px; }
+.usage-low { color: var(--alert) !important; font-weight: 700; }
+.usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; margin-bottom: 10px; }
+.usage-num { font-size: 1.4rem; font-weight: 800; color: var(--leaf); }
+.usage-k { font-size: .68rem; color: var(--ink-dim); margin-top: 2px; }
+
+.fert-block { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; }
+.fert-ico { flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--bg-soft); display: grid; place-items: center; font-size: 1.2rem; }
+.fert-due { color: var(--leaf); font-weight: 700; }
+
+.qr-box { background: #fff; border-radius: 14px; padding: 16px; margin-bottom: 12px; text-align: center; }
+.qr-svg svg { width: 200px; height: 200px; display: inline-block; }
+.qr-name { color: #111; font-weight: 800; font-size: .95rem; margin-top: 8px; }
+
+/* ---------- v2.0 design: rozwijający się liść + minimal chrome ---------- */
+#leaf-intro {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center;
+  background: var(--bg); gap: 18px;
+  animation: introFade .5s ease 1.6s forwards;
+}
+#leaf-intro.skip { display: none; }
+.leaf-g { transform-origin: 60px 126px; }
+.leaf-half { fill: var(--leaf); opacity: .92; }
+.leaf-l { transform-origin: 60px 70px; animation: unfoldL 1s cubic-bezier(.2,.8,.3,1) both; }
+.leaf-r { transform-origin: 60px 70px; animation: unfoldR 1s cubic-bezier(.2,.8,.3,1) .12s both; }
+.leaf-vein { stroke: var(--bg); stroke-width: 2.4; stroke-linecap: round;
+  stroke-dasharray: 130; stroke-dashoffset: 130; animation: veinDraw .8s ease .55s forwards; }
+.leaf-vein.v2 { stroke-dasharray: 50; stroke-dashoffset: 50; stroke-width: 1.8; animation: veinDraw .5s ease .9s forwards; }
+.leaf-word { font-weight: 800; letter-spacing: .14em; font-size: .85rem; color: var(--ink-dim); text-transform: uppercase;
+  opacity: 0; animation: wordIn .5s ease 1s forwards; }
+@keyframes unfoldL { from { transform: scaleX(0) rotate(-12deg); } to { transform: scaleX(1) rotate(0); } }
+@keyframes unfoldR { from { transform: scaleX(0) rotate(12deg); } to { transform: scaleX(1) rotate(0); } }
+@keyframes veinDraw { to { stroke-dashoffset: 0; } }
+@keyframes wordIn { to { opacity: 1; } }
+@keyframes introFade { to { opacity: 0; visibility: hidden; } }
+@media (prefers-reduced-motion: reduce) { #leaf-intro { display: none; } }
+
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-mark { color: var(--leaf); }
+
+/* tabbar: ikony SVG zamiast emoji */
+.tab svg { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: transform .18s ease; }
+.tab span { font-size: .66rem; font-weight: 700; letter-spacing: .02em; }
+.tab { position: relative; gap: 4px; }
+.tab::before { content: ""; position: absolute; top: 6px; left: 50%; width: 0; height: 3px; border-radius: 3px; background: var(--leaf); transform: translateX(-50%); transition: width .22s cubic-bezier(.2,.8,.3,1); }
+.tab.active::before { width: 22px; }
+.tab.active svg { transform: translateY(1px); }
+
+code { background: var(--bg-soft); border: 1px solid var(--card-edge); border-radius: 6px; padding: 1px 6px; font-size: .82em; }

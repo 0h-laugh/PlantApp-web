@@ -12,9 +12,23 @@
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<div id="leaf-intro" aria-hidden="true">
+  <svg viewBox="0 0 120 140" width="120" height="140">
+    <g class="leaf-g">
+      <path class="leaf-half leaf-l" d="M60 118 C 22 96, 14 52, 58 14 C 60 50, 60 86, 60 118 Z"/>
+      <path class="leaf-half leaf-r" d="M60 118 C 98 96, 106 52, 62 14 C 60 50, 60 86, 60 118 Z"/>
+      <path class="leaf-vein" d="M60 126 L60 16" fill="none"/>
+      <path class="leaf-vein v2" d="M60 96 C 48 90, 40 82, 34 70" fill="none"/>
+      <path class="leaf-vein v2" d="M60 96 C 72 90, 80 82, 86 70" fill="none"/>
+      <path class="leaf-vein v2" d="M60 70 C 50 64, 44 56, 40 46" fill="none"/>
+      <path class="leaf-vein v2" d="M60 70 C 70 64, 76 56, 80 46" fill="none"/>
+    </g>
+  </svg>
+  <div class="leaf-word">PlantApp</div>
+</div>
 
 <header class="topbar">
-  <div class="brand"><span class="brand-leaf">🪴</span> PlantApp</div>
+  <div class="brand"><svg class="brand-mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 21 C 5 17, 4 9, 12 3 C 20 9, 19 17, 12 21 Z M12 21 L 12 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg> PlantApp</div>
   <div id="season-badge" class="season-badge"></div>
 </header>
 
@@ -54,6 +68,7 @@
       </div>
     </div>
     <button id="scan-go" class="btn btn-primary btn-block" disabled>Rozpoznaj gatunek</button>
+    <div id="scan-usage" class="usage-line"></div>
     <div id="scan-status" class="status hidden"></div>
     <div id="scan-results" class="results"></div>
   </section>
@@ -61,6 +76,10 @@
   <!-- ====== DOKTOR ====== -->
   <section id="view-doctor" class="view">
     <h1 class="view-title">Doktor roślin</h1>
+    <div class="picker-block">
+      <span class="organ-label">Której rośliny dotyczy diagnoza?</span>
+      <div class="chips" id="doctor-plant-chips"></div>
+    </div>
     <div class="seg">
       <button class="seg-btn active" data-mode="photo">Ze zdjęcia (AI)</button>
       <button class="seg-btn" data-mode="symptoms">Po objawach</button>
@@ -76,6 +95,7 @@
         <div id="doctor-preview" class="photo-preview"><span class="photo-cta">🔬<br>Dotknij, by zrobić zdjęcie zmiany</span></div>
       </label>
       <button id="doctor-go" class="btn btn-primary btn-block" disabled>Zdiagnozuj</button>
+      <div id="doctor-usage" class="usage-line"></div>
       <div id="doctor-status" class="status hidden"></div>
       <div id="doctor-results" class="results"></div>
     </div>
@@ -108,6 +128,16 @@
     </div>
 
     <div class="card">
+      <h3>☁️ Konto i synchronizacja</h3>
+      <div id="cloud-card-body"></div>
+    </div>
+
+    <div class="card">
+      <h3>Zużycie limitu AI</h3>
+      <div id="usage-card-body"></div>
+    </div>
+
+    <div class="card">
       <h3>Twoje dane</h3>
       <p class="muted">Wszystko trzymane lokalnie na telefonie. Zrób kopię przed zmianą urządzenia.</p>
       <div class="row">
@@ -118,7 +148,7 @@
 
     <div class="card">
       <h3>O aplikacji</h3>
-      <p class="muted">PlantApp v1.0 — faza „sam aparat”. Identyfikacja: Pl@ntNet (otwarty projekt badawczy). Baza pielęgnacji: wbudowana, działa offline. Czujniki ESP32/NPK dojdą w kolejnej fazie.</p>
+      <p class="muted">PlantApp v1.1 — faza „sam aparat”. Identyfikacja: Pl@ntNet (otwarty projekt badawczy). Baza pielęgnacji: wbudowana, działa offline. Czujniki ESP32/NPK dojdą w kolejnej fazie.</p>
     </div>
   </section>
 
@@ -131,15 +161,30 @@
 </main>
 
 <nav class="tabbar">
-  <button class="tab active" data-goto="plants"><span class="tab-ico">🪴</span>Rośliny</button>
-  <button class="tab" data-goto="scan"><span class="tab-ico">📷</span>Skanuj</button>
-  <button class="tab" data-goto="doctor"><span class="tab-ico">🩺</span>Doktor</button>
-  <button class="tab" data-goto="settings"><span class="tab-ico">⚙️</span>Więcej</button>
+  <button class="tab active" data-goto="plants" aria-label="Rośliny">
+    <svg viewBox="0 0 24 24"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7 M12 15 L 8 12 M12 12 L 16 9"/></svg>
+    <span>Rośliny</span>
+  </button>
+  <button class="tab" data-goto="scan" aria-label="Skanuj">
+    <svg viewBox="0 0 24 24"><path d="M4 8 V5.5 A1.5 1.5 0 0 1 5.5 4 H8 M16 4 h2.5 A1.5 1.5 0 0 1 20 5.5 V8 M20 16 v2.5 A1.5 1.5 0 0 1 18.5 20 H16 M8 20 H5.5 A1.5 1.5 0 0 1 4 18.5 V16 M12 15.5 a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7 Z"/></svg>
+    <span>Skanuj</span>
+  </button>
+  <button class="tab" data-goto="doctor" aria-label="Doktor">
+    <svg viewBox="0 0 24 24"><path d="M12 4 v16 M4 12 h16 M12 12 m-8.5 0 a8.5 8.5 0 1 0 17 0 a8.5 8.5 0 1 0 -17 0"/></svg>
+    <span>Doktor</span>
+  </button>
+  <button class="tab" data-goto="settings" aria-label="Więcej">
+    <svg viewBox="0 0 24 24"><path d="M5 8 h14 M5 16 h14 M9 8 m-1.8 0 a1.8 1.8 0 1 0 3.6 0 a1.8 1.8 0 1 0 -3.6 0 M15 16 m-1.8 0 a1.8 1.8 0 1 0 3.6 0 a1.8 1.8 0 1 0 -3.6 0"/></svg>
+    <span>Więcej</span>
+  </button>
 </nav>
 
 <div id="toast" class="toast hidden"></div>
 
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
 <script src="care-db.js"></script>
 <script src="app.js"></script>
+<script src="cloud.js"></script>
 </body>
 </html>
