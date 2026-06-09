@@ -1,0 +1,214 @@
+/* PlantApp — „nocna szklarnia": ciemna zieleń, chlorofilowy akcent, pierścień podlewania jako sygnatura. */
+
+:root {
+  --bg: #0F1F15;          /* głęboka zieleń nocnej szklarni */
+  --bg-soft: #16291D;
+  --card: #1C3324;
+  --card-edge: #2A4733;
+  --ink: #EAF3EB;
+  --ink-dim: #9FB8A6;
+  --leaf: #7BC96A;        /* chlorofil — akcent główny */
+  --water: #5AB6D9;       /* woda */
+  --alert: #E2A55B;       /* terakota doniczki — ostrzeżenia */
+  --danger: #E2705B;
+  --ring-track: #2A4733;
+  --radius: 18px;
+  --tabbar-h: 64px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html { font-size: 16px; }
+body {
+  font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100dvh;
+  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+}
+
+a { color: var(--leaf); }
+
+/* ---------- topbar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px calc(10px);
+  padding-top: calc(14px + env(safe-area-inset-top));
+  background: linear-gradient(180deg, var(--bg) 75%, transparent);
+}
+.brand { font-weight: 800; font-size: 1.25rem; letter-spacing: .02em; }
+.brand-leaf { filter: drop-shadow(0 0 8px rgba(123,201,106,.5)); }
+.season-badge { font-size: .75rem; color: var(--ink-dim); border: 1px solid var(--card-edge); border-radius: 999px; padding: 4px 10px; }
+
+/* ---------- views ---------- */
+main { padding: 0 16px; max-width: 560px; margin: 0 auto; }
+.view { display: none; animation: fadeIn .18s ease; }
+.view.active { display: block; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .view { animation: none; } }
+
+.view-title { font-size: 1.5rem; font-weight: 800; margin: 8px 0 4px; }
+.view-sub { color: var(--ink-dim); font-size: .92rem; margin-bottom: 14px; }
+
+/* ---------- plant cards + pierścień podlewania ---------- */
+.plants-list { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.plant-card {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--card); border: 1px solid var(--card-edge);
+  border-radius: var(--radius); padding: 12px 14px; cursor: pointer;
+}
+.plant-card:active { transform: scale(.985); }
+.plant-photo {
+  width: 56px; height: 56px; border-radius: 14px; object-fit: cover;
+  background: var(--bg-soft); display: grid; place-items: center; font-size: 1.6rem; flex: none;
+}
+.plant-info { flex: 1; min-width: 0; }
+.plant-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plant-species { font-size: .8rem; color: var(--ink-dim); font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plant-due { font-size: .8rem; margin-top: 3px; color: var(--water); }
+.plant-due.overdue { color: var(--alert); font-weight: 700; }
+
+.ring { flex: none; width: 54px; height: 54px; position: relative; }
+.ring svg { transform: rotate(-90deg); }
+.ring-track { stroke: var(--ring-track); }
+.ring-fill { stroke: var(--water); transition: stroke-dashoffset .6s ease; stroke-linecap: round; }
+.ring-fill.overdue { stroke: var(--alert); }
+.ring-label {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  font-size: .72rem; font-weight: 800; line-height: 1; text-align: center;
+}
+.ring-label small { display: block; font-size: .55rem; color: var(--ink-dim); font-weight: 600; }
+
+.due-banner {
+  background: linear-gradient(135deg, #2A4733, #1C3324);
+  border: 1px solid var(--leaf); border-radius: var(--radius);
+  padding: 12px 14px; margin: 4px 0 12px; font-size: .92rem;
+}
+
+/* ---------- empty state ---------- */
+.empty { text-align: center; padding: 56px 24px; }
+.empty-art { font-size: 3.4rem; margin-bottom: 12px; }
+.empty h2 { font-size: 1.2rem; margin-bottom: 8px; }
+.empty p { color: var(--ink-dim); font-size: .92rem; margin-bottom: 20px; }
+
+/* ---------- buttons, chips ---------- */
+.btn {
+  border: 0; border-radius: 14px; padding: 13px 18px; font-size: .95rem; font-weight: 700;
+  cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
+.btn-primary { background: var(--leaf); color: #0E1F12; }
+.btn-primary:disabled { background: var(--card-edge); color: var(--ink-dim); cursor: not-allowed; }
+.btn-ghost { background: var(--card); color: var(--ink); border: 1px solid var(--card-edge); }
+.btn-water { background: var(--water); color: #06222E; }
+.btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+.btn-block { width: 100%; margin-top: 14px; }
+
+.chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.chip {
+  border: 1px solid var(--card-edge); background: var(--card); color: var(--ink-dim);
+  border-radius: 999px; padding: 7px 14px; font-size: .85rem; cursor: pointer; font-family: inherit;
+}
+.chip.active { background: var(--leaf); color: #0E1F12; border-color: var(--leaf); font-weight: 700; }
+.organ-row { margin-top: 14px; }
+.organ-label { display: block; font-size: .8rem; color: var(--ink-dim); margin-bottom: 8px; }
+
+/* ---------- photo drop ---------- */
+.photo-drop { display: block; cursor: pointer; }
+.photo-preview {
+  border: 2px dashed var(--card-edge); border-radius: var(--radius);
+  min-height: 200px; display: grid; place-items: center; overflow: hidden; background: var(--bg-soft);
+}
+.photo-preview img { width: 100%; max-height: 320px; object-fit: cover; display: block; }
+.photo-cta { text-align: center; color: var(--ink-dim); font-size: 1rem; line-height: 1.7; }
+
+/* ---------- results ---------- */
+.status { margin-top: 14px; color: var(--ink-dim); font-size: .9rem; text-align: center; }
+.status.error { color: var(--danger); }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--card-edge); border-top-color: var(--leaf); border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; margin-right: 8px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.results { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.result-card { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 14px; }
+.result-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.result-name { font-weight: 800; }
+.result-latin { font-style: italic; color: var(--ink-dim); font-size: .85rem; }
+.score-pill { flex: none; font-size: .78rem; font-weight: 800; padding: 3px 10px; border-radius: 999px; background: var(--bg-soft); border: 1px solid var(--card-edge); }
+.score-high { color: var(--leaf); border-color: var(--leaf); }
+.score-mid { color: var(--alert); border-color: var(--alert); }
+.result-body { margin-top: 8px; font-size: .9rem; color: var(--ink-dim); line-height: 1.5; }
+.result-body strong { color: var(--ink); }
+.result-actions { margin-top: 12px; display: flex; gap: 8px; }
+
+/* ---------- cards / settings ---------- */
+.card { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.card h3 { font-size: 1rem; margin-bottom: 6px; }
+.muted { color: var(--ink-dim); font-size: .88rem; line-height: 1.5; }
+.small { font-size: .8rem; margin-top: 8px; }
+.row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.row input[type="password"], .row input[type="text"] {
+  flex: 1; min-width: 160px; background: var(--bg-soft); border: 1px solid var(--card-edge);
+  border-radius: 12px; padding: 12px; color: var(--ink); font-family: inherit; font-size: .9rem;
+}
+.row input:focus-visible { outline: 2px solid var(--leaf); border-color: var(--leaf); }
+
+.key-warn {
+  background: rgba(226,165,91,.12); border: 1px solid var(--alert); color: var(--alert);
+  border-radius: 12px; padding: 10px 12px; font-size: .85rem; margin-bottom: 12px;
+}
+.key-warn a { color: var(--alert); font-weight: 700; }
+
+/* ---------- segments / doctor ---------- */
+.seg { display: flex; background: var(--card); border: 1px solid var(--card-edge); border-radius: 999px; padding: 4px; margin-bottom: 14px; }
+.seg-btn { flex: 1; border: 0; background: transparent; color: var(--ink-dim); padding: 9px; border-radius: 999px; font-family: inherit; font-size: .88rem; font-weight: 700; cursor: pointer; }
+.seg-btn.active { background: var(--leaf); color: #0E1F12; }
+
+.symptoms-list { display: flex; flex-direction: column; gap: 8px; }
+.symptom { background: var(--card); border: 1px solid var(--card-edge); border-radius: 14px; overflow: hidden; }
+.symptom summary { padding: 13px 14px; cursor: pointer; font-weight: 700; font-size: .92rem; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+.symptom summary::-webkit-details-marker { display: none; }
+.symptom summary::after { content: "+"; color: var(--ink-dim); font-size: 1.1rem; }
+.symptom[open] summary::after { content: "–"; }
+.symptom-body { padding: 0 14px 14px; font-size: .88rem; color: var(--ink-dim); line-height: 1.55; }
+.symptom-body strong { color: var(--ink); }
+
+/* ---------- plant detail ---------- */
+.detail { padding-bottom: 24px; }
+.back-btn { background: none; border: 0; color: var(--leaf); font-family: inherit; font-size: .95rem; font-weight: 700; padding: 10px 0; cursor: pointer; }
+.detail-hero { display: flex; gap: 16px; align-items: center; margin-bottom: 16px; }
+.detail-photo { width: 88px; height: 88px; border-radius: 20px; object-fit: cover; background: var(--bg-soft); display: grid; place-items: center; font-size: 2.4rem; }
+.detail-name { font-size: 1.4rem; font-weight: 800; }
+.detail-latin { font-style: italic; color: var(--ink-dim); font-size: .9rem; }
+.water-block { display: flex; align-items: center; gap: 16px; background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+.water-block .ring { width: 76px; height: 76px; }
+.water-block .ring-label { font-size: .95rem; }
+.care-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.care-cell { background: var(--card); border: 1px solid var(--card-edge); border-radius: 14px; padding: 12px; }
+.care-cell .k { font-size: .72rem; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+.care-cell .v { font-size: .86rem; line-height: 1.45; }
+.interval-row { display: flex; align-items: center; gap: 12px; }
+.interval-row button { width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--card-edge); background: var(--bg-soft); color: var(--ink); font-size: 1.2rem; cursor: pointer; }
+.interval-val { font-weight: 800; font-size: 1.05rem; min-width: 64px; text-align: center; }
+.history { font-size: .85rem; color: var(--ink-dim); }
+.history li { margin-left: 18px; margin-bottom: 4px; }
+
+/* ---------- tabbar ---------- */
+.tabbar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
+  height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: env(safe-area-inset-bottom);
+  display: flex; background: rgba(15,31,21,.92); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--card-edge);
+}
+.tab { flex: 1; border: 0; background: none; color: var(--ink-dim); font-family: inherit; font-size: .7rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; }
+.tab.active { color: var(--leaf); }
+.tab-ico { font-size: 1.25rem; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--tabbar-h) + 18px + env(safe-area-inset-bottom));
+  background: var(--leaf); color: #0E1F12; font-weight: 700; font-size: .9rem;
+  padding: 11px 18px; border-radius: 999px; z-index: 50; max-width: 90vw; text-align: center;
+}
+.hidden { display: none !important; }

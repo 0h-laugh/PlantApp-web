@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PlantApp</title>
+<meta name="description" content="Twój asystent pielęgnacji roślin — identyfikacja ze zdjęcia, podlewanie, choroby.">
+<meta name="theme-color" content="#13251A">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="brand-leaf">🪴</span> PlantApp</div>
+  <div id="season-badge" class="season-badge"></div>
+</header>
+
+<main id="main">
+
+  <!-- ====== MOJE ROŚLINY ====== -->
+  <section id="view-plants" class="view active">
+    <div id="due-banner" class="due-banner hidden"></div>
+    <div id="plants-list" class="plants-list"></div>
+    <div id="plants-empty" class="empty hidden">
+      <div class="empty-art">🌱</div>
+      <h2>Brak roślin w kolekcji</h2>
+      <p>Zrób zdjęcie pierwszej rośliny — rozpoznam gatunek i ustawię plan podlewania.</p>
+      <button class="btn btn-primary" data-goto="scan">📷 Zeskanuj roślinę</button>
+    </div>
+  </section>
+
+  <!-- ====== SKANUJ ====== -->
+  <section id="view-scan" class="view">
+    <h1 class="view-title">Rozpoznaj roślinę</h1>
+    <p class="view-sub">Zdjęcie liścia, kwiatu lub całej rośliny → Pl@ntNet AI zwróci gatunek.</p>
+    <div id="scan-keywarn" class="key-warn hidden">
+      Najpierw dodaj darmowy klucz Pl@ntNet w <a href="#" data-goto="settings">Ustawieniach</a>.
+    </div>
+    <label class="photo-drop" for="scan-file">
+      <input type="file" id="scan-file" accept="image/*" capture="environment" hidden>
+      <div id="scan-preview" class="photo-preview"><span class="photo-cta">📷<br>Dotknij, by zrobić zdjęcie</span></div>
+    </label>
+    <div class="organ-row">
+      <span class="organ-label">Co jest na zdjęciu?</span>
+      <div class="chips" id="organ-chips">
+        <button class="chip active" data-organ="auto">Auto</button>
+        <button class="chip" data-organ="leaf">Liść</button>
+        <button class="chip" data-organ="flower">Kwiat</button>
+        <button class="chip" data-organ="fruit">Owoc</button>
+        <button class="chip" data-organ="bark">Pęd</button>
+      </div>
+    </div>
+    <button id="scan-go" class="btn btn-primary btn-block" disabled>Rozpoznaj gatunek</button>
+    <div id="scan-status" class="status hidden"></div>
+    <div id="scan-results" class="results"></div>
+  </section>
+
+  <!-- ====== DOKTOR ====== -->
+  <section id="view-doctor" class="view">
+    <h1 class="view-title">Doktor roślin</h1>
+    <div class="seg">
+      <button class="seg-btn active" data-mode="photo">Ze zdjęcia (AI)</button>
+      <button class="seg-btn" data-mode="symptoms">Po objawach</button>
+    </div>
+
+    <div id="doctor-photo" class="doctor-pane">
+      <p class="view-sub">Zdjęcie chorego liścia lub szkodnika → Pl@ntNet rozpozna chorobę/szkodnika.</p>
+      <div id="doctor-keywarn" class="key-warn hidden">
+        Najpierw dodaj darmowy klucz Pl@ntNet w <a href="#" data-goto="settings">Ustawieniach</a>.
+      </div>
+      <label class="photo-drop" for="doctor-file">
+        <input type="file" id="doctor-file" accept="image/*" capture="environment" hidden>
+        <div id="doctor-preview" class="photo-preview"><span class="photo-cta">🔬<br>Dotknij, by zrobić zdjęcie zmiany</span></div>
+      </label>
+      <button id="doctor-go" class="btn btn-primary btn-block" disabled>Zdiagnozuj</button>
+      <div id="doctor-status" class="status hidden"></div>
+      <div id="doctor-results" class="results"></div>
+    </div>
+
+    <div id="doctor-symptoms" class="doctor-pane hidden">
+      <p class="view-sub">Działa offline. Wybierz, co widzisz:</p>
+      <div id="symptoms-list" class="symptoms-list"></div>
+    </div>
+  </section>
+
+  <!-- ====== USTAWIENIA ====== -->
+  <section id="view-settings" class="view">
+    <h1 class="view-title">Ustawienia</h1>
+
+    <div class="card">
+      <h3>Klucz API Pl@ntNet</h3>
+      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz zostaje tylko w Twoim telefonie.</p>
+      <div class="row">
+        <input type="password" id="api-key" placeholder="Wklej klucz API…" autocomplete="off">
+        <button id="save-key" class="btn btn-primary">Zapisz</button>
+      </div>
+      <div id="key-status" class="muted small"></div>
+    </div>
+
+    <div class="card">
+      <h3>Przypomnienia</h3>
+      <p class="muted">Powiadomienie, gdy któraś roślina czeka na podlanie (działa gdy aplikacja jest zainstalowana).</p>
+      <button id="notif-btn" class="btn btn-ghost">🔔 Włącz powiadomienia</button>
+      <div id="notif-status" class="muted small"></div>
+    </div>
+
+    <div class="card">
+      <h3>Twoje dane</h3>
+      <p class="muted">Wszystko trzymane lokalnie na telefonie. Zrób kopię przed zmianą urządzenia.</p>
+      <div class="row">
+        <button id="export-btn" class="btn btn-ghost">⬇️ Eksport JSON</button>
+        <label class="btn btn-ghost" for="import-file">⬆️ Import<input type="file" id="import-file" accept=".json" hidden></label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>O aplikacji</h3>
+      <p class="muted">PlantApp v1.0 — faza „sam aparat”. Identyfikacja: Pl@ntNet (otwarty projekt badawczy). Baza pielęgnacji: wbudowana, działa offline. Czujniki ESP32/NPK dojdą w kolejnej fazie.</p>
+    </div>
+  </section>
+
+  <!-- ====== SZCZEGÓŁY ROŚLINY (overlay) ====== -->
+  <section id="view-plant-detail" class="view detail">
+    <button class="back-btn" data-goto="plants">← Wróć</button>
+    <div id="plant-detail-content"></div>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <button class="tab active" data-goto="plants"><span class="tab-ico">🪴</span>Rośliny</button>
+  <button class="tab" data-goto="scan"><span class="tab-ico">📷</span>Skanuj</button>
+  <button class="tab" data-goto="doctor"><span class="tab-ico">🩺</span>Doktor</button>
+  <button class="tab" data-goto="settings"><span class="tab-ico">⚙️</span>Więcej</button>
+</nav>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="care-db.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
