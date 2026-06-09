@@ -9,6 +9,9 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -27,15 +30,41 @@
   <div class="leaf-word">PlantApp</div>
 </div>
 
+<section id="view-auth" class="auth-screen hidden">
+  <div class="auth-inner">
+    <svg class="auth-leaf" viewBox="0 0 120 140" width="86" height="100" aria-hidden="true">
+      <g class="leaf-g">
+        <path class="leaf-half leaf-l" d="M60 118 C 22 96, 14 52, 58 14 C 60 50, 60 86, 60 118 Z"/>
+        <path class="leaf-half leaf-r" d="M60 118 C 98 96, 106 52, 62 14 C 60 50, 60 86, 60 118 Z"/>
+        <path class="leaf-vein" d="M60 126 L60 16" fill="none"/>
+      </g>
+    </svg>
+    <h1 class="auth-title">PlantApp</h1>
+    <p class="auth-sub">Twój domowy ogród, pod kontrolą.<br>Identyfikacja ze zdjęcia, podlewanie, diagnozy — na każdym urządzeniu.</p>
+    <div class="auth-form">
+      <input type="email" id="au-email" placeholder="E-mail" autocomplete="email">
+      <input type="password" id="au-pass" placeholder="Hasło (min. 6 znaków)" autocomplete="current-password">
+      <button class="btn btn-primary btn-block" id="au-login">Zaloguj się</button>
+      <button class="btn btn-ghost btn-block" id="au-signup">Załóż konto</button>
+      <div id="au-msg" class="auth-msg"></div>
+      <button class="auth-skip" id="au-skip">Kontynuuj bez konta →</button>
+      <p class="auth-note">Bez konta wszystko działa lokalnie na tym telefonie.<br>Konto dodaje kopię w chmurze i synchronizację urządzeń.</p>
+    </div>
+  </div>
+</section>
 <header class="topbar">
   <div class="brand"><svg class="brand-mark" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 21 C 5 17, 4 9, 12 3 C 20 9, 19 17, 12 21 Z M12 21 L 12 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg> PlantApp</div>
-  <div id="season-badge" class="season-badge"></div>
 </header>
 
 <main id="main">
 
   <!-- ====== MOJE ROŚLINY ====== -->
   <section id="view-plants" class="view active">
+    <div class="hero">
+      <div class="hero-date" id="hero-date"></div>
+      <h1 class="hero-line" id="hero-line"></h1>
+    </div>
+    <div id="assistant-box" class="assistant hidden"></div>
     <div id="due-banner" class="due-banner hidden"></div>
     <div id="plants-list" class="plants-list"></div>
     <div id="plants-empty" class="empty hidden">

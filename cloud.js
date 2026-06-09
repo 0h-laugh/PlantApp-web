@@ -15,6 +15,37 @@
 
   const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   let user = null;
+  const authScreen = document.querySelector("#view-auth");
+
+  function showAuthScreen(show) {
+    if (!authScreen) return;
+    authScreen.classList.toggle("hidden", !show);
+    document.body.classList.toggle("auth-open", show);
+  }
+  function wireAuthScreen() {
+    if (!authScreen || authScreen.dataset.wired) return;
+    authScreen.dataset.wired = "1";
+    const msg = authScreen.querySelector("#au-msg");
+    const act = async (kind) => {
+      const email = authScreen.querySelector("#au-email").value.trim();
+      const pass = authScreen.querySelector("#au-pass").value;
+      if (!email || pass.length < 6) { msg.textContent = "Podaj e-mail i hasło (min. 6 znaków)."; return; }
+      msg.textContent = "…";
+      const { error } = kind === "signUp"
+        ? await sb.auth.signUp({ email, password: pass })
+        : await sb.auth.signInWithPassword({ email, password: pass });
+      if (error) msg.textContent = ({
+        "Invalid login credentials": "Błędny e-mail lub hasło.",
+        "User already registered": "Konto już istnieje — kliknij „Zaloguj się”.",
+      })[error.message] || error.message;
+    };
+    authScreen.querySelector("#au-login").onclick = () => act("signIn");
+    authScreen.querySelector("#au-signup").onclick = () => act("signUp");
+    authScreen.querySelector("#au-skip").onclick = () => {
+      localStorage.setItem("pa_skipauth", "1");
+      showAuthScreen(false);
+    };
+  }
   let pushTimer = null;
   let lastPull = 0;
 
@@ -142,8 +173,12 @@
   sb.auth.onAuthStateChange((_event, session) => {
     user = session?.user || null;
     renderCloudUI();
-    if (user) fullSync(false);
+    if (user) { showAuthScreen(false); fullSync(false); }
+    else if (!localStorage.getItem("pa_skipauth")) showAuthScreen(true);
   });
 
+  wireAuthScreen();
   renderCloudUI();
+  // pierwsze wejście bez sesji → onboarding (onAuthStateChange INITIAL_SESSION też to złapie)
+  if (!localStorage.getItem("pa_skipauth")) showAuthScreen(true);
 })();

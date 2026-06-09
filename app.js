@@ -114,6 +114,56 @@ function lastDiagnosis(plant) {
   return (plant.journal || []).filter(e => e.type === "diagnosis").slice(-1)[0] || null;
 }
 
+// ============ ASYSTENT — wnioski z dziennika ============
+function diagAction(name) {
+  for (const d of Object.values(DISEASE_DB)) if (d.pl === name) return d.action;
+  for (const s of SYMPTOMS_DB) if (s.label === name) return s.action;
+  return null;
+}
+function plantInsights(p) {
+  const out = [];
+  const j = p.journal || [];
+  const d = daysUntilWater(p);
+  const f = daysUntilFert(p);
+  const care = careFor(p.latin);
+  const interval = currentInterval(p);
+
+  if (d <= 0) out.push({ prio: 0, ico: "💧", text: `Podlej dziś${d < 0 ? ` — spóźnienie ${-d} ${-d === 1 ? "dzień" : "dni"}` : ""}.` });
+
+  // dyscyplina podlewania: realny rytm z dziennika vs plan
+  const waters = j.filter(e => e.type === "water").map(e => e.t).sort((a, b) => a - b);
+  if (waters.length >= 4) {
+    const gaps = waters.slice(1).map((t, i) => (t - waters[i]) / DAY);
+    const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    if (avg < interval * 0.65) out.push({ prio: 1, ico: "⚠️", text: `Podlewasz średnio co ${avg.toFixed(1)} dnia przy planie co ${interval} — ryzyko przelania. Sprawdzaj palcem 2–3 cm ziemi przed podlaniem.` });
+    else if (avg > interval * 1.45) out.push({ prio: 1, ico: "🏜️", text: `Realny rytm to co ~${Math.round(avg)} dni przy planie co ${interval} — roślina bywa przesuszana. Skróć odstępy albo dostosuj plan przyciskiem ±.` });
+  }
+
+  // kontrola po diagnozie
+  const diag = lastDiagnosis(p);
+  if (diag) {
+    const days = Math.floor((Date.now() - diag.t) / DAY);
+    if (days >= 3 && days <= 21) {
+      const act = diagAction(diag.name);
+      out.push({ prio: 0, ico: "🩺", text: `${days} dni po diagnozie „${diag.name}” — sprawdź, czy objawy ustępują.${act ? " Przypomnienie: " + act.split(".")[0] + "." : ""} Jeśli nie ma poprawy, zrób kontrolne zdjęcie w Doktorze.` });
+    }
+  }
+
+  if (f !== null && f <= 0) out.push({ prio: 1, ico: "🌿", text: "Czas nawieźć — ostatnie nawożenie ponad miesiąc temu w sezonie wzrostu." });
+  if (!isSummer() && /wysok/i.test(care.humidity)) out.push({ prio: 2, ico: "💨", text: "Sezon grzewczy + roślina lubiąca wilgoć: zraszaj lub dostaw nawilżacz, obserwuj końcówki liści." });
+
+  const photos = j.filter(e => e.photo);
+  const lastPhoto = Math.max(p.added || 0, ...photos.map(e => e.t));
+  if (Date.now() - lastPhoto > 30 * DAY) out.push({ prio: 3, ico: "📷", text: "Ponad miesiąc bez zdjęcia — dodaj jedno do ewolucji, łatwiej wychwycisz powolne zmiany." });
+
+  return out.sort((a, b) => a.prio - b.prio);
+}
+function allInsights(limit = 4) {
+  const items = [];
+  store.plants.forEach(p => plantInsights(p).forEach(i => items.push({ ...i, plant: p })));
+  return items.sort((a, b) => a.prio - b.prio).slice(0, limit);
+}
+
 // ============ NAWIGACJA ============
 function goto(view) {
   $$(".view").forEach(v => v.classList.remove("active"));
@@ -146,7 +196,7 @@ function ringSVG(plant, size = 54) {
   </div>`;
 }
 
-// ============ LISTA ROŚLIN ============
+// ============ LISTA ROŚLIN (siatka kafli) ============
 function renderPlants() {
   const plants = store.plants;
   const list = $("#plants-list"), empty = $("#plants-empty"), banner = $("#due-banner");
@@ -155,34 +205,55 @@ function renderPlants() {
 
   const due = plants.filter(p => daysUntilWater(p) <= 0);
   const fertDue = plants.filter(p => { const f = daysUntilFert(p); return f !== null && f <= 0; });
-  if (due.length || fertDue.length) {
-    banner.classList.remove("hidden");
-    banner.innerHTML = (due.length ? `💧 <strong>${due.length === 1 ? "1 roślina czeka" : due.length + " rośliny czekają"} na podlanie:</strong> ${due.map(p => esc(p.name)).join(", ")}` : "")
-      + (due.length && fertDue.length ? "<br>" : "")
-      + (fertDue.length ? `🌿 <strong>Do nawiezienia:</strong> ${fertDue.map(p => esc(p.name)).join(", ")}` : "");
-  } else banner.classList.add("hidden");
 
-  plants.slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b)).forEach(p => {
+  // hero
+  const hd = $("#hero-date"), hl = $("#hero-line");
+  if (hd) hd.textContent = new Date().toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" }) + " · " + (isSummer() ? "sezon wzrostu" : "spoczynek zimowy");
+  if (hl) {
+    if (!plants.length) hl.textContent = "Zacznij od pierwszego skanu";
+    else if (due.length) hl.innerHTML = `<span class="hero-num">${due.length}</span> ${due.length === 1 ? "roślina czeka" : due.length < 5 ? "rośliny czekają" : "roślin czeka"} na wodę`;
+    else hl.innerHTML = `Wszystko podlane <span class="hero-ok">✓</span>`;
+  }
+
+  banner.classList.add("hidden"); // baner zastąpiony przez Asystenta
+
+  // Asystent — wnioski z dziennika
+  const aBox = $("#assistant-box");
+  if (aBox) {
+    const ins = allInsights(4);
+    if (!ins.length) { aBox.classList.add("hidden"); aBox.innerHTML = ""; }
+    else {
+      aBox.classList.remove("hidden");
+      aBox.innerHTML = `<div class="as-head"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg> Asystent</div>`
+        + ins.map(i => `<button class="as-item" data-plant="${i.plant.id}">
+            <span class="as-ico">${i.ico}</span>
+            <span class="as-txt"><strong>${esc(i.plant.name)}:</strong> ${esc(i.text)}</span>
+          </button>`).join("");
+      aBox.querySelectorAll("[data-plant]").forEach(b => b.onclick = () => openDetail(b.dataset.plant));
+    }
+  }
+
+  plants.slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b)).forEach((p, i) => {
     const d = daysUntilWater(p);
     const f = daysUntilFert(p);
     const diag = lastDiagnosis(p);
     const recentDiag = diag && (Date.now() - diag.t) < 21 * DAY;
     const el = document.createElement("div");
-    el.className = "plant-card";
+    el.className = "tile" + (d <= 0 ? " tile-due" : "");
+    el.style.animationDelay = (i * 45) + "ms";
     el.innerHTML = `
-      ${p.photo ? `<img class="plant-photo" src="${p.photo}" alt="">` : `<div class="plant-photo">🪴</div>`}
-      <div class="plant-info">
-        <div class="plant-name">${esc(p.name)}</div>
-        <div class="plant-species">${esc(p.latin || "gatunek nieznany")}</div>
-        <div class="plant-due ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "Podlej dzisiaj!" : "Podlewanie za " + d + " " + (d === 1 ? "dzień" : "dni")}${f !== null && f <= 0 ? ` <span class="fert-due">· 🌿 nawóź</span>` : ""}</div>
-        ${recentDiag ? `<div class="plant-diag">🩺 ${esc(diag.name)} · ${fmtDate(diag.t)}</div>` : ""}
-      </div>
-      ${ringSVG(p)}`;
+      ${p.photo ? `<img class="tile-photo" src="${p.photo}" alt="" loading="lazy">` : `<div class="tile-photo tile-ph"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>`}
+      <div class="tile-ring">${ringSVG(p, 44)}</div>
+      ${recentDiag ? `<div class="tile-flag" title="${esc(diag.name)}">🩺</div>` : ""}
+      ${f !== null && f <= 0 ? `<div class="tile-flag tile-flag2" title="czas nawieźć">🌿</div>` : ""}
+      <div class="tile-grad"></div>
+      <div class="tile-meta">
+        <div class="tile-name">${esc(p.name)}</div>
+        <div class="tile-due-txt ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "podlej dziś" : "woda za " + d + " dn."}</div>
+      </div>`;
     el.addEventListener("click", () => openDetail(p.id));
     list.appendChild(el);
   });
-
-  $("#season-badge").textContent = isSummer() ? "☀️ sezon wzrostu" : "❄️ spoczynek zimowy";
 }
 
 // ============ SZCZEGÓŁY ROŚLINY: dziennik + ewolucja ============
@@ -236,6 +307,12 @@ function openDetail(id) {
       </div>
       ${fert !== null ? `<button class="btn btn-ghost" id="fert-now" style="padding:9px 14px">🌿 Nawiozłem/am</button>` : ""}
     </div>
+
+    ${(() => { const ins = plantInsights(p); return ins.length ? `
+    <div class="card as-card">
+      <div class="sec-k">Asystent</div>
+      ${ins.map(i => `<div class="as-line"><span class="as-ico">${i.ico}</span><span>${esc(i.text)}</span></div>`).join("")}
+    </div>` : ""; })()}
 
     <div class="action-row">
       <label class="btn btn-ghost" for="journal-photo-file">📷 Zdjęcie do dziennika<input type="file" id="journal-photo-file" accept="image/*" capture="environment" hidden></label>
@@ -468,13 +545,17 @@ $("#doctor-go").addEventListener("click", async () => {
   $("#doctor-go").disabled = true;
   try {
     const fd = new FormData();
-    fd.append("image", doctorBlob, "photo.jpg");
-    const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${encodeURIComponent(store.apiKey)}&lang=pl`;
+    fd.append("images", doctorBlob, "photo.jpg");
+    fd.append("organs", "auto");
+    const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${encodeURIComponent(store.apiKey)}&nb-results=3`;
     const res = await fetch(url, { method: "POST", body: fd });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź panel PlantNet.");
     if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia zmiany — albo trybu „Po objawach”.");
     if (res.status === 429) throw new Error("Limit dzienny wyczerpany. Użyj trybu „Po objawach”.");
-    if (!res.ok) throw new Error("Błąd serwera Pl@ntNet (" + res.status + ").");
+    if (!res.ok) {
+      let detail = ""; try { detail = (await res.json()).message || ""; } catch {}
+      throw new Error("Pl@ntNet odrzucił zapytanie (" + res.status + (detail ? ": " + detail : "") + "). Spróbuj innego zdjęcia (JPG, wyraźne zbliżenie zmiany).");
+    }
     const data = await res.json();
     bumpUsage("diseases", data.remainingIdentificationRequests);
     renderDoctorResults(data.results || []);
@@ -503,7 +584,7 @@ function renderDoctorResults(results) {
     const code = (r.name || "").toUpperCase();
     const known = DISEASE_DB[code];
     const score = Math.round((r.score || 0) * 100);
-    const displayName = known ? known.pl : (r.commonNames?.[0] || r.name || "Nieznana zmiana");
+    const displayName = known ? known.pl : (r.description || r.name || "Nieznana zmiana");
     const card = document.createElement("div");
     card.className = "result-card";
     card.innerHTML = `

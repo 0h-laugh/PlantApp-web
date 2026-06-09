@@ -286,3 +286,77 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; }
 .tab.active svg { transform: translateY(1px); }
 
 code { background: var(--bg-soft); border: 1px solid var(--card-edge); border-radius: 6px; padding: 1px 6px; font-size: .82em; }
+
+/* ========== v2.1 REDESIGN: typografia, hero, kafle, onboarding ========== */
+:root { --display: "Space Grotesk", -apple-system, sans-serif; }
+.view-title, .brand, .hero-line, .detail-name, .auth-title, .usage-num, .interval-val, .ring-label { font-family: var(--display); }
+
+/* hero */
+.hero { padding: 6px 2px 18px; }
+.hero-date { font-size: .78rem; color: var(--ink-dim); text-transform: capitalize; letter-spacing: .03em; margin-bottom: 6px; }
+.hero-line { font-size: 1.65rem; font-weight: 700; line-height: 1.15; letter-spacing: -.01em; }
+.hero-num { color: var(--water); font-size: 1.9rem; }
+.hero-ok { color: var(--leaf); }
+
+/* siatka kafli */
+.plants-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.tile {
+  position: relative; aspect-ratio: 1 / 1.12; border-radius: 22px; overflow: hidden;
+  background: var(--card); border: 1px solid var(--card-edge); cursor: pointer;
+  animation: tileIn .4s cubic-bezier(.2,.8,.3,1) both;
+}
+@keyframes tileIn { from { opacity: 0; transform: translateY(14px) scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tile { animation: none; } }
+.tile:active { transform: scale(.97); }
+.tile-due { border-color: var(--alert); box-shadow: 0 0 0 1px var(--alert), 0 6px 24px -10px rgba(226,165,91,.45); }
+.tile-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.tile-ph { display: grid; place-items: center; color: var(--card-edge); background: var(--bg-soft); }
+.tile-grad { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 42%, rgba(8,18,12,.88) 100%); }
+.tile-ring { position: absolute; top: 8px; right: 8px; filter: drop-shadow(0 2px 6px rgba(0,0,0,.5)); }
+.tile-ring .ring-label { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+.tile-flag { position: absolute; top: 10px; left: 10px; font-size: .85rem; background: rgba(8,18,12,.72); border-radius: 999px; padding: 4px 7px; backdrop-filter: blur(4px); }
+.tile-flag2 { top: 42px; }
+.tile-meta { position: absolute; left: 12px; right: 12px; bottom: 11px; }
+.tile-name { font-family: var(--display); font-weight: 700; font-size: .95rem; line-height: 1.2; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-due-txt { font-size: .74rem; color: var(--water); margin-top: 2px; font-weight: 600; }
+.tile-due-txt.overdue { color: var(--alert); }
+
+/* onboarding / auth */
+.auth-screen {
+  position: fixed; inset: 0; z-index: 90; overflow-y: auto;
+  background:
+    radial-gradient(110% 70% at 50% -10%, #1E3A28 0%, transparent 60%),
+    var(--bg);
+  display: grid; place-items: center; padding: 32px 24px;
+}
+body.auth-open { overflow: hidden; }
+.auth-inner { width: 100%; max-width: 360px; text-align: center; animation: fadeIn .4s ease; }
+.auth-leaf { margin-bottom: 6px; }
+.auth-leaf .leaf-half { fill: var(--leaf); opacity: .95; }
+.auth-leaf .leaf-vein { stroke: var(--bg); stroke-width: 2.4; stroke-linecap: round; }
+.auth-title { font-size: 2rem; font-weight: 700; letter-spacing: -.02em; margin-bottom: 8px; }
+.auth-sub { color: var(--ink-dim); font-size: .92rem; line-height: 1.55; margin-bottom: 26px; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.auth-form input {
+  background: var(--card); border: 1px solid var(--card-edge); border-radius: 14px;
+  padding: 14px; color: var(--ink); font-family: inherit; font-size: .95rem;
+}
+.auth-form input:focus-visible { outline: 2px solid var(--leaf); border-color: var(--leaf); }
+.auth-form .btn-block { margin-top: 2px; }
+.auth-msg { min-height: 1.2em; font-size: .82rem; color: var(--alert); text-align: center; }
+.auth-skip { background: none; border: 0; color: var(--ink-dim); font-family: inherit; font-size: .88rem; font-weight: 600; padding: 10px; cursor: pointer; text-align: center; }
+.auth-skip:hover { color: var(--ink); }
+.auth-note { font-size: .74rem; color: var(--ink-dim); text-align: center; line-height: 1.5; opacity: .8; }
+
+/* primary z gradientem — jeden mocny akcent */
+.btn-primary { background: linear-gradient(135deg, #8FD97E, #5FB868); }
+
+/* ---------- Asystent ---------- */
+.assistant { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
+.as-head { display: flex; align-items: center; gap: 7px; font-family: var(--display); font-weight: 700; font-size: .85rem; color: var(--leaf); margin-bottom: 8px; letter-spacing: .02em; }
+.as-item { display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--card-edge); padding: 10px 0; cursor: pointer; font-family: inherit; color: var(--ink); }
+.as-item:first-of-type { border-top: 0; }
+.as-ico { flex: none; font-size: .95rem; }
+.as-txt { font-size: .86rem; line-height: 1.45; color: var(--ink-dim); }
+.as-txt strong { color: var(--ink); }
+.as-card .as-line { display: flex; gap: 10px; align-items: flex-start; font-size: .87rem; line-height: 1.5; color: var(--ink-dim); padding: 6px 0; }
