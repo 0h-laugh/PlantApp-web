@@ -104,8 +104,9 @@
       return settings.assistant || null;
     },
     saveAssistantConfig: async (assistant) => saveSettings({ assistant }),
-    identifyPlant: (formData, { organ = "auto", lang = "pl", nbResults = 4 } = {}) =>
-      plantNetFetch("identify/all", formData, { lang, "nb-results": nbResults, organs: organ }),
+    identifyPlant: (formData, { lang = "pl", nbResults = 4 } = {}) =>
+      // organs is a multipart form field (set in app.js, one per image), NOT a query param.
+      plantNetFetch("identify/all", formData, { lang, "nb-results": nbResults }),
     identifyDisease: (formData, { nbResults = 3 } = {}) =>
       plantNetFetch("diseases/identify", formData, { "nb-results": nbResults }),
   };
@@ -293,8 +294,11 @@
     if (findError) return { ok: false, message: "Błąd odczytu zaproszenia: " + findError.message };
     const invite = (invites || [])[0];
     if (!invite) return { ok: false, message: "Nie znaleziono aktywnego zaproszenia dla tego konta." };
-    const { error: memberError } = await sb.from("home_members").upsert({ home_id: invite.home_id, user_id: user.id, role: "member" }, { onConflict: "home_id,user_id" });
-    if (memberError) return { ok: false, message: "Błąd dodawania do domu: " + memberError.message };
+    // Plain insert (not upsert): an upsert is INSERT ... ON CONFLICT DO UPDATE, which also
+    // requires the UPDATE policy — owner-only — so the invitee got an RLS 403. A duplicate
+    // (23505) just means they are already a member, which we treat as success.
+    const { error: memberError } = await sb.from("home_members").insert({ home_id: invite.home_id, user_id: user.id, role: "member" });
+    if (memberError && memberError.code !== "23505") return { ok: false, message: "Błąd dodawania do domu: " + memberError.message };
     const { error: updateError } = await sb.from("home_invites").update({ status: "accepted" }).eq("id", invite.id);
     if (updateError) return { ok: false, message: "Dodano do domu, ale nie udało się zamknąć zaproszenia: " + updateError.message };
     await fullSync(false);
@@ -350,9 +354,12 @@
 
   // ---------- SYNC ----------
 
+  // Content-based key: the SAME logical entry must collapse across devices. Volatile fields
+  // (id, author) are deliberately excluded — migration assigned different random ids to the
+  // same legacy entry on each device, which made id-keyed merges multiply entries every sync.
   function journalKey(e) {
-    if (e.id) return "id:" + e.id;
-    return [e.type || "", e.t || "", e.userId || "", e.userEmail || "", e.displayName || "", e.text || "", e.name || "", e.score || "", e.src || "", e.photo || ""].join("|");
+    const photo = e.photo || (Array.isArray(e.photos) ? e.photos[0] : "") || "";
+    return [e.type || "", e.t || "", e.title || "", e.text || "", e.name || "", e.score || "", e.src || "", photo].join("|");
   }
 
   function journalTime(e) { return Number(e?.t || 0) || 0; }

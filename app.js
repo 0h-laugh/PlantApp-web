@@ -184,6 +184,22 @@ function normalizeJournalEntry(entry) {
   };
 }
 
+
+// Collapse duplicate journal entries by content (same key as cloud.js merge). Legacy data
+// accumulated ~1 copy per sync because the old merge keyed on a volatile per-device id.
+function journalContentKey(e) {
+  const photo = e.photo || (Array.isArray(e.photos) ? e.photos[0] : "") || "";
+  return [e.type || "", e.t || "", e.title || "", e.text || "", e.name || "", e.score || "", e.src || "", photo].join("|");
+}
+function dedupeJournal(journal) {
+  const seen = new Map();
+  for (const e of journal || []) {
+    const k = journalContentKey(e);
+    if (!seen.has(k)) seen.set(k, e);
+  }
+  return [...seen.values()].sort((x, y) => (Number(x.t) || 0) - (Number(y.t) || 0));
+}
+
 // ============ MIGRACJA v1.0 → v1.2 (miejsca/pokoje + history → journal) ============
 const DEFAULT_HOME_NAME = "Mój dom";
 const DEFAULT_ROOM_NAME = "Bez pokoju";
@@ -299,7 +315,7 @@ window.movePlantToRoom = movePlantToRoom;
     }
     if (!p.homeId || !store.homes.some(h => h.id === p.homeId)) { p.homeId = def.homeId; changed = true; }
     if (!p.roomId || !rooms.some(r => r.id === p.roomId && r.homeId === p.homeId)) { p.roomId = def.roomId; changed = true; }
-    const normalized = (p.journal || []).map(e => normalizeJournalEntry(e));
+    const normalized = dedupeJournal((p.journal || []).map(e => normalizeJournalEntry(e)));
     if (JSON.stringify(normalized) !== JSON.stringify(p.journal || [])) {
       p.journal = normalized;
       changed = true;
@@ -1312,12 +1328,16 @@ $("#scan-go").addEventListener("click", async () => {
   try {
     const fd = new FormData();
     fd.append("images", scanBlob, "photo.jpg");
-    fd.append("organs", organ);
-    const res = await fetchPlantNet("identify", fd, { organ, lang: "pl", nbResults: 4 });
+    // PlantNet expects one "organs" form field per image; omitting it means "auto".
+    if (organ && organ !== "auto") fd.append("organs", organ);
+    const res = await fetchPlantNet("identify", fd, { lang: "pl", nbResults: 4 });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź klucz i Authorized domains w panelu PlantNet.");
     if (res.status === 404) throw new Error("Nie rozpoznano rośliny. Spróbuj wyraźniejszego zdjęcia liścia lub kwiatu.");
     if (res.status === 429) throw new Error("Wyczerpany dzienny limit (500/dzień). Spróbuj jutro.");
-    if (!res.ok) throw new Error("Błąd serwera Pl@ntNet (" + res.status + ").");
+    if (!res.ok) {
+      let detail = ""; try { detail = (await res.json())?.message || ""; } catch {}
+      throw new Error("Błąd serwera Pl@ntNet (" + res.status + (detail ? ": " + detail : "") + ").");
+    }
     const data = await res.json();
     bumpUsage("identify", data.remainingIdentificationRequests);
     renderScanResults(data.results || []);
@@ -1410,7 +1430,6 @@ $("#doctor-go").addEventListener("click", async () => {
   try {
     const fd = new FormData();
     fd.append("images", doctorBlob, "photo.jpg");
-    fd.append("organs", "auto");
     const res = await fetchPlantNet("disease", fd, { nbResults: 3 });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź panel PlantNet.");
     if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia zmiany — albo trybu „Po objawach”.");
