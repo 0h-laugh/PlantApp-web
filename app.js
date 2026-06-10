@@ -164,6 +164,186 @@ function allInsights(limit = 4) {
   return items.sort((a, b) => a.prio - b.prio).slice(0, limit);
 }
 
+// ============ AI ASYSTENT ROŚLINY ============
+const ASSISTANT_STORAGE_KEY = "pa_assistant_messages";
+let activeAssistantPlantId = null;
+let assistantSending = false;
+let assistantCloudWarn = "";
+let assistantSb = null;
+
+function assistantStore() {
+  return JSON.parse(localStorage.getItem(ASSISTANT_STORAGE_KEY) || "{}");
+}
+function saveAssistantStore(data) {
+  localStorage.setItem(ASSISTANT_STORAGE_KEY, JSON.stringify(data));
+}
+function assistantMessages(plantId) {
+  return assistantStore()[plantId] || [];
+}
+function setAssistantMessages(plantId, messages) {
+  const data = assistantStore();
+  data[plantId] = messages.slice(-40);
+  saveAssistantStore(data);
+}
+function addAssistantMessage(plantId, role, content, extra = {}) {
+  const message = { id: uid(), role, content: String(content || ""), t: Date.now(), ...extra };
+  setAssistantMessages(plantId, [...assistantMessages(plantId), message]);
+  return message;
+}
+function getAssistantClient() {
+  if (assistantSb) return assistantSb;
+  const cfg = window.PA_CONFIG || {};
+  if (!window.supabase || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) return null;
+  assistantSb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  return assistantSb;
+}
+function buildAssistantContext(p) {
+  const journal = (p.journal || []).slice().sort((a, b) => b.t - a.t);
+  const diagnoses = journal.filter(e => e.type === "diagnosis").slice(0, 5).map(e => ({
+    date: fmtDate(e.t), name: e.name, score: e.score || null, source: e.src || "unknown",
+  }));
+  const notes = journal.filter(e => e.type === "note").slice(0, 5).map(e => ({ date: fmtDate(e.t), text: e.text }));
+  const recentJournal = journal.slice(0, 8).map(e => {
+    const label = (JOURNAL_META[e.type] || { label: () => e.type }).label(e).replace(/<[^>]*>/g, "");
+    return { date: fmtDate(e.t), type: e.type, label };
+  });
+  const fert = daysUntilFert(p);
+  const waterIn = daysUntilWater(p);
+  const care = careFor(p.latin);
+  return {
+    plant: { id: p.id, name: p.name, latin: p.latin || "", added: fmtDate(p.added || Date.now()) },
+    recentJournal,
+    diagnoses,
+    notes,
+    schedule: {
+      watering: {
+        everyDays: currentInterval(p),
+        daysUntilNext: waterIn,
+        lastWatered: p.lastWatered ? fmtDate(p.lastWatered) : null,
+        season: isSummer() ? "sezon wzrostu" : "spoczynek zimowy",
+      },
+      fertilizing: {
+        everyDays: FERT_INTERVAL,
+        daysUntilNext: fert,
+        lastFertilized: p.lastFertilized ? fmtDate(p.lastFertilized) : null,
+        active: fert !== null,
+      },
+    },
+    care: { light: care.light, humidity: care.humidity, tips: care.tips, toxic: care.toxic ?? null },
+  };
+}
+async function loadAssistantMessagesFromSupabase(plantId) {
+  const sb = getAssistantClient();
+  if (!sb) return;
+  const { data: sessionData } = await sb.auth.getSession();
+  if (!sessionData?.session) return;
+  const { data, error } = await sb
+    .from("plant_assistant_messages")
+    .select("role,content,created_at")
+    .eq("plant_id", plantId)
+    .order("created_at", { ascending: true })
+    .limit(40);
+  if (error) { assistantCloudWarn = "Historia lokalna działa, ale tabela Supabase plant_assistant_messages nie jest jeszcze dostępna."; return; }
+  if (data?.length) {
+    setAssistantMessages(plantId, data.map(row => ({ id: uid(), role: row.role, content: row.content, t: new Date(row.created_at).getTime() || Date.now(), fromCloud: true })));
+  }
+}
+async function saveAssistantMessageToSupabase(plantId, message, context) {
+  try {
+    const sb = getAssistantClient();
+    if (!sb) return;
+    const { data: sessionData } = await sb.auth.getSession();
+    const user = sessionData?.session?.user;
+    if (!user) return;
+    const row = {
+      plant_id: plantId,
+      user_id: user.id,
+      role: message.role,
+      content: message.content,
+      context: message.role === "user" ? context : null,
+      created_at: new Date(message.t).toISOString(),
+    };
+    let { error } = await sb.from("plant_assistant_messages").insert(row);
+    if (error) {
+      ({ error } = await sb.from("plant_assistant_messages").insert({ plant_id: plantId, role: message.role, content: message.content }));
+    }
+    assistantCloudWarn = error ? "Nie udało się zapisać tej wiadomości w Supabase — sprawdź tabelę plant_assistant_messages i polityki RLS." : "";
+  } catch (err) {
+    assistantCloudWarn = "Nie udało się zapisać wiadomości w Supabase.";
+  }
+}
+function renderAssistantMessages(plantId) {
+  const p = store.plants.find(x => x.id === plantId);
+  const shell = $("#plant-assistant-shell");
+  if (!p || !shell) return;
+  const messages = assistantMessages(plantId);
+  shell.classList.remove("hidden");
+  shell.innerHTML = `
+    <div class="assistant-chat-head">
+      <div>
+        <div class="sec-k">🤖 AI asystent</div>
+        <p class="assistant-safe">Asystent daje porady ogrodnicze na podstawie danych rośliny i nie zastępuje profesjonalnej diagnozy ani badania laboratoryjnego.</p>
+      </div>
+    </div>
+    <div class="assistant-messages" id="assistant-messages">
+      ${messages.length ? messages.map(m => `<div class="assistant-msg assistant-msg-${m.role}">
+        <div class="assistant-msg-role">${m.role === "user" ? "Ty" : "Asystent"}</div>
+        <div class="assistant-msg-content">${esc(m.content)}</div>
+      </div>`).join("") : `<div class="assistant-empty">Zapytaj o podlewanie, nawożenie, objawy albo ostatnie wpisy z dziennika rośliny.</div>`}
+      ${assistantSending ? `<div class="assistant-msg assistant-msg-assistant"><div class="assistant-msg-role">Asystent</div><div class="assistant-msg-content"><span class="spinner"></span>Analizuję kontekst rośliny…</div></div>` : ""}
+    </div>
+    ${assistantCloudWarn ? `<div class="assistant-warning">${esc(assistantCloudWarn)}</div>` : ""}
+    <form class="assistant-form" id="assistant-form">
+      <input id="assistant-input" type="text" placeholder="Napisz pytanie o ${esc(p.name)}…" autocomplete="off" ${assistantSending ? "disabled" : ""}>
+      <button class="btn btn-primary" type="submit" ${assistantSending ? "disabled" : ""}>Wyślij</button>
+    </form>`;
+  const form = $("#assistant-form");
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const input = $("#assistant-input");
+    const message = input.value.trim();
+    if (message) sendAssistantMessage(plantId, message);
+  };
+  const list = $("#assistant-messages");
+  if (list) list.scrollTop = list.scrollHeight;
+}
+async function openAssistant(plantId) {
+  activeAssistantPlantId = plantId;
+  assistantCloudWarn = "";
+  renderAssistantMessages(plantId);
+  await loadAssistantMessagesFromSupabase(plantId);
+  if (activeAssistantPlantId === plantId) renderAssistantMessages(plantId);
+}
+async function sendAssistantMessage(plantId, message) {
+  const p = store.plants.find(x => x.id === plantId);
+  if (!p || assistantSending) return;
+  const context = buildAssistantContext(p);
+  const userMessage = addAssistantMessage(plantId, "user", message);
+  assistantSending = true;
+  renderAssistantMessages(plantId);
+  await saveAssistantMessageToSupabase(plantId, userMessage, context);
+  try {
+    const sb = getAssistantClient();
+    if (!sb) throw new Error("Backend Supabase nie jest skonfigurowany.");
+    const history = assistantMessages(plantId).slice(-10).map(m => ({ role: m.role, content: m.content }));
+    const { data, error } = await sb.functions.invoke("plant-assistant", { body: { plantId, message, context, history } });
+    if (error) throw error;
+    const reply = data?.reply || data?.message || data?.content;
+    if (!reply) throw new Error("Edge Function plant-assistant nie zwróciła odpowiedzi.");
+    const assistantMessage = addAssistantMessage(plantId, "assistant", reply);
+    await saveAssistantMessageToSupabase(plantId, assistantMessage, context);
+  } catch (err) {
+    const fallback = "Nie mogę teraz połączyć się z backendem AI. Sprawdź Supabase Edge Function `plant-assistant`; klucz modelu powinien być tylko po stronie backendu, nie w przeglądarce.";
+    addAssistantMessage(plantId, "assistant", fallback);
+    assistantCloudWarn = err.message || fallback;
+  } finally {
+    assistantSending = false;
+    renderAssistantMessages(plantId);
+  }
+}
+window.openAssistant = openAssistant;
+window.sendAssistantMessage = sendAssistantMessage;
+
 // ============ NAWIGACJA ============
 function goto(view) {
   $$(".view").forEach(v => v.classList.remove("active"));
@@ -396,6 +576,7 @@ function openDetail(id) {
     }
   };
   goto("plant-detail");
+  openAssistant(id);
   $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === "plants"));
 }
 function mutatePlant(id, fn) {
