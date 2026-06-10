@@ -165,19 +165,140 @@ function allInsights(limit = 4) {
 }
 
 // ============ NAWIGACJA ============
-function goto(view) {
-  $$(".view").forEach(v => v.classList.remove("active"));
-  $("#view-" + view).classList.add("active");
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === view));
-  window.scrollTo(0, 0);
+const NAV_VIEWS = new Set(["plants", "scan", "doctor", "settings", "plant-detail"]);
+const VIEW_ANIMATION_CLASSES = ["view-enter-forward", "view-exit-forward", "view-enter-back", "view-exit-back"];
+let currentView = document.querySelector(".view.active")?.id.replace("view-", "") || "plants";
+let currentPlantId = null;
+let navStack = [currentView];
+let navIndex = 0;
+let isApplyingHistoryState = false;
+
+function navUrl(view, state = {}) {
+  const params = new URLSearchParams();
+  params.set("view", view);
+  if (view === "plant-detail" && state.plantId) params.set("plant", state.plantId);
+  return `${location.pathname}${location.search}#${params.toString()}`;
+}
+function makeNavState(view, index = navIndex, state = {}) {
+  return { view, navIndex: index, plantId: state.plantId || null };
+}
+function syncHistoryState(view = currentView, state = {}) {
+  if (!NAV_VIEWS.has(view) || !("history" in window)) return;
+  history.replaceState(makeNavState(view, navIndex, state), "", navUrl(view, state));
+}
+function animateViewChange(fromEl, toEl, direction) {
+  if (!toEl || fromEl === toEl) return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    fromEl?.classList.remove(...VIEW_ANIMATION_CLASSES);
+    toEl.classList.remove(...VIEW_ANIMATION_CLASSES);
+    return;
+  }
+  const dir = direction === "back" ? "back" : "forward";
+  const enterClass = `view-enter-${dir}`;
+  const exitClass = `view-exit-${dir}`;
+  fromEl?.classList.remove(...VIEW_ANIMATION_CLASSES);
+  toEl.classList.remove(...VIEW_ANIMATION_CLASSES);
+  if (fromEl) {
+    fromEl.classList.add(exitClass);
+    fromEl.addEventListener("animationend", () => fromEl.classList.remove(exitClass), { once: true });
+  }
+  toEl.classList.add(enterClass);
+  toEl.addEventListener("animationend", () => toEl.classList.remove(enterClass), { once: true });
+}
+function applyViewSideEffects(view) {
   if (view === "plants") renderPlants();
   if (view === "doctor") renderDoctorPlantPicker();
   if (view === "scan" || view === "doctor") updateKeyWarnings();
 }
+function goto(view, options = {}) {
+  if (!NAV_VIEWS.has(view)) return;
+  const target = $("#view-" + view);
+  if (!target) return;
+
+  const fromView = currentView;
+  const fromEl = $("#view-" + fromView);
+  const direction = options.direction || "forward";
+  const state = options.state || {};
+  const previousPlantId = currentPlantId;
+
+  if (view === "plant-detail") currentPlantId = state.plantId || currentPlantId;
+  else currentPlantId = null;
+  const isSameDestination = fromView === view && previousPlantId === currentPlantId;
+
+  if (fromView !== view) animateViewChange(fromEl, target, direction);
+  $$(".view").forEach(v => v.classList.toggle("active", v === target));
+  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === (view === "plant-detail" ? "plants" : view)));
+  currentView = view;
+  window.scrollTo(0, 0);
+  applyViewSideEffects(view);
+
+  if (!isSameDestination && !isApplyingHistoryState && !options.skipHistory && "history" in window) {
+    if (options.replace) {
+      history.replaceState(makeNavState(view, navIndex, { plantId: currentPlantId }), "", navUrl(view, { plantId: currentPlantId }));
+      navStack[navIndex] = view;
+    } else {
+      navStack = navStack.slice(0, navIndex + 1);
+      navStack.push(view);
+      navIndex = navStack.length - 1;
+      history.pushState(makeNavState(view, navIndex, { plantId: currentPlantId }), "", navUrl(view, { plantId: currentPlantId }));
+    }
+  }
+}
+function applyHistoryState(state) {
+  const view = state?.view && NAV_VIEWS.has(state.view) ? state.view : "plants";
+  const targetIndex = typeof state?.navIndex === "number" ? state.navIndex : 0;
+  const direction = targetIndex < navIndex ? "back" : "forward";
+  navIndex = Math.max(0, targetIndex);
+  navStack = navStack.slice(0, navIndex + 1);
+  navStack[navIndex] = view;
+
+  isApplyingHistoryState = true;
+  if (view === "plant-detail") {
+    if (state?.plantId) openDetail(state.plantId, { direction, skipHistory: true });
+    else goto("plants", { direction, skipHistory: true });
+  } else {
+    goto(view, { direction, skipHistory: true });
+  }
+  isApplyingHistoryState = false;
+}
+window.addEventListener("popstate", (e) => applyHistoryState(e.state));
+
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-goto]");
-  if (g) { e.preventDefault(); goto(g.dataset.goto); }
+  if (!g) return;
+  e.preventDefault();
+  const direction = g.classList.contains("back-btn") ? "back" : "forward";
+  if (g.classList.contains("back-btn") && history.state?.navIndex > 0) {
+    history.back();
+    return;
+  }
+  goto(g.dataset.goto, { direction });
 });
+
+syncHistoryState(currentView);
+
+let swipeBackStart = null;
+window.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse" || e.clientX > 24) return;
+  swipeBackStart = { x: e.clientX, y: e.clientY, id: e.pointerId };
+});
+window.addEventListener("pointermove", (e) => {
+  if (!swipeBackStart || e.pointerId !== swipeBackStart.id) return;
+  const dx = e.clientX - swipeBackStart.x;
+  const dy = Math.abs(e.clientY - swipeBackStart.y);
+  if (dx > 12 && dx > dy) e.preventDefault();
+}, { passive: false });
+window.addEventListener("pointerup", (e) => {
+  if (!swipeBackStart || e.pointerId !== swipeBackStart.id) return;
+  const dx = e.clientX - swipeBackStart.x;
+  const dy = Math.abs(e.clientY - swipeBackStart.y);
+  swipeBackStart = null;
+  if (dx > 80 && dy < 70) {
+    if (history.state?.navIndex > 0) history.back();
+    else if (currentView !== "plants") goto("plants", { direction: "back" });
+  }
+});
+window.addEventListener("pointercancel", () => { swipeBackStart = null; });
 
 // ============ PIERŚCIEŃ PODLEWANIA ============
 function ringSVG(plant, size = 54) {
@@ -266,9 +387,9 @@ const JOURNAL_META = {
   note: { ico: "📝", label: e => esc(e.text) },
 };
 
-function openDetail(id) {
+function openDetail(id, options = {}) {
   const p = store.plants.find(x => x.id === id);
-  if (!p) return;
+  if (!p) { goto("plants", { direction: "back", replace: true }); return; }
   const care = careFor(p.latin);
   const d = daysUntilWater(p);
   const fert = daysUntilFert(p);
@@ -395,8 +516,12 @@ function openDetail(id) {
       toast("Usunięto"); goto("plants");
     }
   };
-  goto("plant-detail");
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === "plants"));
+  goto("plant-detail", {
+    direction: options.direction || "forward",
+    skipHistory: options.skipHistory,
+    replace: options.replace || (currentView === "plant-detail" && currentPlantId === id),
+    state: { plantId: id },
+  });
 }
 function mutatePlant(id, fn) {
   const plants = store.plants;
