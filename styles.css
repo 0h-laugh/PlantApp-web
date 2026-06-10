@@ -146,11 +146,11 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; }
 .muted { color: var(--ink-dim); font-size: .88rem; line-height: 1.5; }
 .small { font-size: .8rem; margin-top: 8px; }
 .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
-.row input[type="password"], .row input[type="text"] {
+.row input[type="password"], .row input[type="text"], .row input[type="email"], .row select {
   flex: 1; min-width: 160px; background: var(--bg-soft); border: 1px solid var(--card-edge);
   border-radius: 12px; padding: 12px; color: var(--ink); font-family: inherit; font-size: .9rem;
 }
-.row input:focus-visible { outline: 2px solid var(--leaf); border-color: var(--leaf); }
+.row input:focus-visible, .row select:focus-visible { outline: 2px solid var(--leaf); border-color: var(--leaf); }
 
 .key-warn {
   background: rgba(226,165,91,.12); border: 1px solid var(--alert); color: var(--alert);

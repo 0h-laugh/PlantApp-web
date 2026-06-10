@@ -391,7 +391,7 @@ function openDetail(id) {
   $("#delete-plant").onclick = () => {
     if (confirm(`Usunąć „${p.name}" razem z dziennikiem?`)) {
       store.plants = store.plants.filter(x => x.id !== id);
-      window.dispatchEvent(new CustomEvent("pa:delete", { detail: id }));
+      window.dispatchEvent(new CustomEvent("pa:delete", { detail: { id, userId: p._cloudUserId, homeId: p.homeId } }));
       toast("Usunięto"); goto("plants");
     }
   };
