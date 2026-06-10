@@ -15,7 +15,9 @@
 
   const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   let user = null;
+  const inviteCardBody = document.querySelector("#invite-card-body");
   const authScreen = document.querySelector("#view-auth");
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
   function showAuthScreen(show) {
     if (!authScreen) return;
@@ -51,7 +53,14 @@
 
   const tombs = {
     get list() { return JSON.parse(localStorage.getItem("pa_tombstones") || "[]"); },
-    add(id) { const l = this.list; if (!l.includes(id)) { l.push(id); localStorage.setItem("pa_tombstones", JSON.stringify(l)); } },
+    add(item) {
+      const entry = typeof item === "string" ? { id: item } : item;
+      if (!entry || !entry.id) return;
+      const l = this.list.filter(x => (typeof x === "string" ? x : x.id) !== entry.id);
+      l.push(entry);
+      localStorage.setItem("pa_tombstones", JSON.stringify(l));
+    },
+    get ids() { return new Set(this.list.map(t => typeof t === "string" ? t : t.id)); },
     clear() { localStorage.removeItem("pa_tombstones"); },
   };
 
@@ -59,6 +68,118 @@
     const el = document.querySelector("#sync-status");
     if (el) { el.textContent = msg; el.classList.toggle("usage-low", !!err); }
   }
+
+  // ---------- ZAPROSZENIA DO DOMU ----------
+  function randomToken() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    return [...bytes].map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  function renderInviteUI(message = "") {
+    if (!inviteCardBody) return;
+    if (!user) {
+      inviteCardBody.innerHTML = `<p class="muted">Zaloguj się, aby zapraszać domowników i przyjmować zaproszenia.</p>`;
+      return;
+    }
+    const homes = localHomes();
+    const homeOptions = homes.map(h => `<option value="${esc(h.id)}">${esc(h.name || "Dom")}${h.address ? " — " + esc(h.address) : ""}</option>`).join("");
+    inviteCardBody.innerHTML = `
+      <div class="row">
+        <select id="invite-home-select" class="room-select">${homeOptions}</select>
+      </div>
+      <div class="row">
+        <input type="email" id="invite-email" placeholder="email@example.com" autocomplete="off">
+        <button class="btn btn-primary" id="invite-send">Zaproś</button>
+      </div>
+      <div class="row">
+        <input type="text" id="invite-token" placeholder="Token zaproszenia (opcjonalnie)">
+        <button class="btn btn-ghost" id="invite-accept">Akceptuj</button>
+      </div>
+      <div id="invite-msg" class="muted small">${esc(message)}</div>
+      <div id="invite-lists" class="muted small"></div>`;
+    document.querySelector("#invite-send").onclick = async () => {
+      const email = document.querySelector("#invite-email").value.trim();
+      const homeId = document.querySelector("#invite-home-select").value;
+      const result = await createInvite(email, homeId);
+      renderInviteUI(result.message);
+      await renderInvites();
+    };
+    document.querySelector("#invite-accept").onclick = async () => {
+      const token = document.querySelector("#invite-token").value.trim();
+      const result = await acceptInvite(token);
+      renderInviteUI(result.message);
+      await renderInvites();
+    };
+  }
+
+  async function createInvite(email, homeId) {
+    if (!user) return { ok: false, message: "Najpierw zaloguj się." };
+    if (!homeId) return { ok: false, message: "Wybierz dom do udostępnienia." };
+    if (!/^\S+@\S+\.\S+$/.test(email)) return { ok: false, message: "Podaj poprawny e-mail." };
+    await pushAll(); // dom musi istnieć w chmurze zanim wstawimy zaproszenie (FK)
+    const token = randomToken();
+    const expires = new Date(Date.now() + 7 * 86400000).toISOString();
+    const { error } = await sb.from("home_invites").insert({
+      home_id: homeId,
+      email: email.toLowerCase(),
+      token,
+      status: "pending",
+      invited_by: user.id,
+      expires_at: expires,
+    });
+    if (error) return { ok: false, message: "Błąd zaproszenia: " + error.message };
+    return { ok: true, token, message: `Zaproszenie utworzone. Przekaż token: ${token}` };
+  }
+
+  async function getPendingInvites() {
+    if (!user) return { outgoing: [], incoming: [] };
+    const now = new Date().toISOString();
+    const [outgoingRes, incomingRes] = await Promise.all([
+      sb.from("home_invites").select("id,home_id,email,token,status,expires_at").eq("invited_by", user.id).eq("status", "pending").gt("expires_at", now).order("expires_at", { ascending: true }),
+      sb.from("home_invites").select("id,home_id,email,token,status,expires_at,homes(name,address)").eq("email", (user.email || "").toLowerCase()).eq("status", "pending").gt("expires_at", now).order("expires_at", { ascending: true }),
+    ]);
+    if (outgoingRes.error) setStatus("Błąd zaproszeń: " + outgoingRes.error.message, true);
+    if (incomingRes.error) setStatus("Błąd zaproszeń: " + incomingRes.error.message, true);
+    return { outgoing: outgoingRes.data || [], incoming: incomingRes.data || [] };
+  }
+
+  async function renderInvites() {
+    const box = document.querySelector("#invite-lists");
+    if (!box || !user) return;
+    const { outgoing, incoming } = await getPendingInvites();
+    const homesById = Object.fromEntries(localHomes().map(h => [h.id, h]));
+    const outHtml = outgoing.length
+      ? `<div><strong>Wysłane:</strong>${outgoing.map(i => `<div>${esc(i.email)} → ${esc(homesById[i.home_id]?.name || "dom")} · token: <code>${esc(i.token)}</code> · do ${new Date(i.expires_at).toLocaleDateString("pl-PL")}</div>`).join("")}</div>`
+      : `<div>Brak oczekujących zaproszeń wysłanych przez Ciebie.</div>`;
+    const inHtml = incoming.length
+      ? `<div><strong>Do zaakceptowania:</strong>${incoming.map(i => `<div>${esc(i.homes?.name || "Dom")}${i.homes?.address ? " — " + esc(i.homes.address) : ""} · <button class="btn btn-ghost accept-inline" data-token="${esc(i.token)}">Akceptuj</button></div>`).join("")}</div>`
+      : `<div>Brak oczekujących zaproszeń na Twój e-mail.</div>`;
+    box.innerHTML = outHtml + inHtml;
+    box.querySelectorAll(".accept-inline").forEach(b => b.onclick = async () => {
+      const result = await acceptInvite(b.dataset.token);
+      renderInviteUI(result.message);
+      await renderInvites();
+    });
+  }
+
+  async function acceptInvite(token) {
+    if (!user) return { ok: false, message: "Zaloguj się, aby zaakceptować zaproszenie." };
+    const q = () => sb.from("home_invites").select("id,home_id,email,status,expires_at").eq("email", (user.email || "").toLowerCase()).eq("status", "pending").gt("expires_at", new Date().toISOString());
+    const { data: invites, error: findError } = token ? await q().eq("token", token).limit(1) : await q().limit(1);
+    if (findError) return { ok: false, message: "Błąd odczytu zaproszenia: " + findError.message };
+    const invite = (invites || [])[0];
+    if (!invite) return { ok: false, message: "Nie znaleziono aktywnego zaproszenia dla tego konta." };
+    const { error: memberError } = await sb.from("home_members").upsert({ home_id: invite.home_id, user_id: user.id, role: "member" }, { onConflict: "home_id,user_id" });
+    if (memberError) return { ok: false, message: "Błąd dodawania do domu: " + memberError.message };
+    const { error: updateError } = await sb.from("home_invites").update({ status: "accepted" }).eq("id", invite.id);
+    if (updateError) return { ok: false, message: "Dodano do domu, ale nie udało się zamknąć zaproszenia: " + updateError.message };
+    await fullSync(false);
+    return { ok: true, message: "Zaproszenie zaakceptowane — wspólny dom, pokoje i rośliny pojawią się na liście miejsc." };
+  }
+
+  window.PlantCloud = { createInvite, getPendingInvites, acceptInvite };
 
   // ---------- UI ----------
   function renderCloudUI() {
@@ -122,14 +243,17 @@
   async function pushAll() {
     if (!user) return;
     if (typeof ensureDefaultPlace === "function") ensureDefaultPlace();
-    const homes = localHomes().map(h => ({
-      id: h.id,
-      owner_id: user.id,
-      name: h.name || "Mój dom",
-      address: h.address || null,
-      created_at: new Date(h.createdAt || h.updatedAt || Date.now()).toISOString(),
-      updated_at: new Date(h.updatedAt || h.createdAt || Date.now()).toISOString(),
-    }));
+    // cudzych domów nie nadpisujemy (RLS: update tylko właściciel)
+    const homes = localHomes()
+      .filter(h => !h.ownerId || h.ownerId === user.id)
+      .map(h => ({
+        id: h.id,
+        owner_id: h.ownerId || user.id,
+        name: h.name || "Mój dom",
+        address: h.address || null,
+        created_at: new Date(h.createdAt || h.updatedAt || Date.now()).toISOString(),
+        updated_at: new Date(h.updatedAt || h.createdAt || Date.now()).toISOString(),
+      }));
     if (homes.length) {
       const { error } = await sb.from("homes").upsert(homes, { onConflict: "id" });
       if (error) { setStatus("Błąd wysyłki miejsc: " + error.message, true); return; }
@@ -147,29 +271,45 @@
       if (error) { setStatus("Błąd wysyłki pokoi: " + error.message, true); return; }
     }
     const plants = localPlants();
-    const rows = plants.map(p => ({
-      id: p.id,
-      user_id: user.id,
-      home_id: p.homeId || null,
-      room_id: p.roomId || null,
-      data: p,
-      updated_at: new Date(p.updatedAt || p.added || Date.now()).toISOString(),
-    }));
-    tombs.list.forEach(id => rows.push({ id, user_id: user.id, data: { deleted: true }, updated_at: new Date().toISOString() }));
+    const rows = plants.map(p => {
+      const { _cloudUserId, ...data } = p;
+      return {
+        id: p.id,
+        user_id: _cloudUserId || user.id,
+        home_id: p.homeId || null,
+        room_id: p.roomId || null,
+        data,
+        updated_at: new Date(p.updatedAt || p.added || Date.now()).toISOString(),
+      };
+    });
+    tombs.list.forEach(item => {
+      const t = typeof item === "string" ? { id: item } : item;
+      rows.push({ id: t.id, user_id: t.userId || user.id, home_id: t.homeId || null, room_id: null, data: { deleted: true }, updated_at: new Date().toISOString() });
+    });
     if (!rows.length && !homes.length && !rooms.length) return;
-    const { error } = rows.length ? await sb.from("plants").upsert(rows, { onConflict: "id" }) : { error: null };
-    if (error) { setStatus("Błąd wysyłki roślin: " + error.message, true); return; }
+    // własne rośliny: upsert; cudze (współdzielone): update bez zmiany właściciela
+    const ownRows = rows.filter(r => r.user_id === user.id);
+    const sharedRows = rows.filter(r => r.user_id !== user.id);
+    if (ownRows.length) {
+      const { error } = await sb.from("plants").upsert(ownRows, { onConflict: "id" });
+      if (error) { setStatus("Błąd wysyłki roślin: " + error.message, true); return; }
+    }
+    for (const row of sharedRows) {
+      const { id, user_id: _owner, ...patch } = row;
+      const { error } = await sb.from("plants").update(patch).eq("id", id);
+      if (error) { setStatus("Błąd wysyłki roślin: " + error.message, true); return; }
+    }
     tombs.clear();
     setStatus("Zsynchronizowano: " + new Date().toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }));
   }
 
   async function pullMerge() {
     if (!user) return;
-    const { data: homeRows, error: homesError } = await sb.from("homes").select("id,name,address,created_at,updated_at");
+    const { data: homeRows, error: homesError } = await sb.from("homes").select("id,owner_id,name,address,created_at,updated_at");
     if (homesError) { setStatus("Błąd pobierania miejsc: " + homesError.message, true); return; }
     const { data: roomRows, error: roomsError } = await sb.from("rooms").select("id,home_id,name,sort_order,created_at,updated_at");
     if (roomsError) { setStatus("Błąd pobierania pokoi: " + roomsError.message, true); return; }
-    const { data: rows, error } = await sb.from("plants").select("id,home_id,room_id,data,updated_at");
+    const { data: rows, error } = await sb.from("plants").select("id,user_id,home_id,room_id,data,updated_at");
     if (error) { setStatus("Błąd pobierania roślin: " + error.message, true); return; }
     lastPull = Date.now();
 
@@ -178,7 +318,8 @@
       const remoteT = new Date(row.updated_at).getTime();
       const mine = homesById[row.id];
       const mineT = mine ? (mine.updatedAt || mine.createdAt || 0) : 0;
-      if (!mine || remoteT > mineT) homesById[row.id] = { id: row.id, name: row.name, address: row.address || "", createdAt: new Date(row.created_at).getTime(), updatedAt: remoteT };
+      if (!mine || remoteT > mineT) homesById[row.id] = { id: row.id, ownerId: row.owner_id, name: row.name, address: row.address || "", createdAt: new Date(row.created_at).getTime(), updatedAt: remoteT };
+      else if (mine && !mine.ownerId) mine.ownerId = row.owner_id;
     }
     const roomsById = Object.fromEntries(localRooms().map(r => [r.id, r]));
     for (const row of roomRows || []) {
@@ -192,7 +333,7 @@
     const local = localPlants();
     const byId = Object.fromEntries(local.map(p => [p.id, p]));
     let changed = false;
-    const deadHere = new Set(tombs.list);
+    const deadHere = tombs.ids;
 
     for (const row of rows || []) {
       const remoteT = new Date(row.updated_at).getTime();
@@ -204,7 +345,10 @@
       }
       if (deadHere.has(row.id)) continue; // lokalnie usunięta, tombstone poleci przy push
       if (!mine || remoteT > mineT) {
-        byId[row.id] = { ...row.data, homeId: row.data?.homeId || row.home_id || "", roomId: row.data?.roomId || row.room_id || "" };
+        byId[row.id] = { ...row.data, homeId: row.data?.homeId || row.home_id || "", roomId: row.data?.roomId || row.room_id || "", _cloudUserId: row.user_id };
+        changed = true;
+      } else if (mine && !mine._cloudUserId) {
+        mine._cloudUserId = row.user_id;
         changed = true;
       }
     }
@@ -216,6 +360,8 @@
     setStatus(manual ? "Synchronizuję…" : "…");
     await pullMerge();
     await pushAll();
+    renderInviteUI();
+    await renderInvites();
   }
 
   function schedulePush() {
@@ -236,12 +382,14 @@
   sb.auth.onAuthStateChange((_event, session) => {
     user = session?.user || null;
     renderCloudUI();
+    renderInviteUI();
     if (user) { showAuthScreen(false); fullSync(false); }
     else if (!localStorage.getItem("pa_skipauth")) showAuthScreen(true);
   });
 
   wireAuthScreen();
   renderCloudUI();
+  renderInviteUI();
   // pierwsze wejście bez sesji → onboarding (onAuthStateChange INITIAL_SESSION też to złapie)
   if (!localStorage.getItem("pa_skipauth")) showAuthScreen(true);
 })();
