@@ -41,11 +41,42 @@ a { color: var(--leaf); }
 .season-badge { font-size: .75rem; color: var(--ink-dim); border: 1px solid var(--card-edge); border-radius: 999px; padding: 4px 10px; }
 
 /* ---------- views ---------- */
-main { padding: 0 16px; max-width: 560px; margin: 0 auto; }
-.view { display: none; animation: fadeIn .18s ease; }
-.view.active { display: block; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .view { animation: none; } }
+main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; overflow-x: hidden; }
+.view { display: none; }
+.view.active,
+.view.view-exit-forward,
+.view.view-exit-back { display: block; }
+.view.view-exit-forward,
+.view.view-exit-back {
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  pointer-events: none;
+}
+.view-enter-forward { animation: viewEnterForward .22s ease both; }
+.view-exit-forward { animation: viewExitForward .22s ease both; }
+.view-enter-back { animation: viewEnterBack .22s ease both; }
+.view-exit-back { animation: viewExitBack .22s ease both; }
+@keyframes viewEnterForward { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+@keyframes viewExitForward { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-18px); } }
+@keyframes viewEnterBack { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
+@keyframes viewExitBack { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(18px); } }
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+  .view-enter-forward,
+  .view-exit-forward,
+  .view-enter-back,
+  .view-exit-back,
+  .auth-inner { animation: none !important; }
+}
 
 .view-title { font-size: 1.5rem; font-weight: 800; margin: 8px 0 4px; }
 .view-sub { color: var(--ink-dim); font-size: .92rem; margin-bottom: 14px; }
@@ -302,6 +333,7 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; }
 @keyframes unfoldR { from { transform: scaleX(0) rotate(12deg); } to { transform: scaleX(1) rotate(0); } }
 @keyframes veinDraw { to { stroke-dashoffset: 0; } }
 @keyframes wordIn { to { opacity: 1; } }
+@keyframes authIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes introFade { to { opacity: 0; visibility: hidden; } }
 @media (prefers-reduced-motion: reduce) { #leaf-intro { display: none; } }
 
@@ -361,7 +393,7 @@ code { background: var(--bg-soft); border: 1px solid var(--card-edge); border-ra
   display: grid; place-items: center; padding: 32px 24px;
 }
 body.auth-open { overflow: hidden; }
-.auth-inner { width: 100%; max-width: 360px; text-align: center; animation: fadeIn .4s ease; }
+.auth-inner { width: 100%; max-width: 360px; text-align: center; animation: authIn .4s ease; }
 .auth-leaf { margin-bottom: 6px; }
 .auth-leaf .leaf-half { fill: var(--leaf); opacity: .95; }
 .auth-leaf .leaf-vein { stroke: var(--bg); stroke-width: 2.4; stroke-linecap: round; }
