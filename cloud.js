@@ -8,13 +8,112 @@
   const cardBody = document.querySelector("#cloud-card-body");
   if (!cardBody) return;
 
+  let user = null;
+  let sb = null;
+  let settings = { apiKey: "" };
+  let settingsLoaded = false;
+  let settingsError = "";
+  const hasPlantNetProxy = !!cfg.PLANTNET_EDGE_FUNCTION_URL;
+
+  function emitSettings() {
+    window.dispatchEvent(new CustomEvent("pa:settings", { detail: {
+      loaded: settingsLoaded,
+      error: settingsError,
+      hasApiKey: !!settings.apiKey,
+      hasPlantNetProxy,
+      hasPlantNetAccess: hasPlantNetProxy || !!settings.apiKey,
+    } }));
+  }
+
+  function requireUser() {
+    if (!user) throw new Error("Zaloguj się, żeby zapisać i pobrać klucz Pl@ntNet z chmury.");
+  }
+
+  async function loadSettings() {
+    settingsLoaded = false;
+    settingsError = "";
+    emitSettings();
+    if (!sb || !user) {
+      settings = { apiKey: "" };
+      settingsLoaded = true;
+      emitSettings();
+      return settings;
+    }
+    const { data, error } = await sb.from("user_settings").select("data").eq("user_id", user.id).maybeSingle();
+    if (error) {
+      settingsError = "Nie udało się pobrać ustawień: " + error.message;
+      settingsLoaded = true;
+      emitSettings();
+      throw error;
+    }
+    settings = { apiKey: data?.data?.apiKey || "" };
+    settingsLoaded = true;
+    emitSettings();
+    return settings;
+  }
+
+  async function saveSettings(next) {
+    requireUser();
+    settings = { ...settings, ...next };
+    settingsLoaded = true;
+    settingsError = "";
+    emitSettings();
+    const { error } = await sb.from("user_settings").upsert({
+      user_id: user.id,
+      data: settings,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" });
+    if (error) {
+      settingsError = "Nie udało się zapisać ustawień: " + error.message;
+      emitSettings();
+      throw error;
+    }
+    emitSettings();
+    return settings;
+  }
+
+  async function plantNetFetch(path, formData, params = {}) {
+    if (hasPlantNetProxy) {
+      const proxy = new URL(cfg.PLANTNET_EDGE_FUNCTION_URL, window.location.origin);
+      proxy.searchParams.set("path", path);
+      Object.entries(params).forEach(([key, value]) => proxy.searchParams.set(key, String(value)));
+      return fetch(proxy.toString(), { method: "POST", body: formData });
+    }
+    if (!settingsLoaded) await loadSettings();
+    if (!settings.apiKey) throw new Error("Brak klucza Pl@ntNet w chmurze — dodaj go w Ustawieniach.");
+    const url = new URL(`https://my-api.plantnet.org/v2/${path}`);
+    url.searchParams.set("api-key", settings.apiKey);
+    Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
+    return fetch(url.toString(), { method: "POST", body: formData });
+  }
+
+  window.PlantAppCloud = {
+    isConfigured: () => !!sb,
+    isSettingsLoaded: () => settingsLoaded,
+    getSettingsError: () => settingsError,
+    hasPlantNetProxy: () => hasPlantNetProxy,
+    hasPlantNetAccess: () => hasPlantNetProxy || !!settings.apiKey,
+    hasPlantNetApiKey: () => !!settings.apiKey,
+    getPlantNetApiKey: async () => {
+      if (!settingsLoaded) await loadSettings();
+      return settings.apiKey;
+    },
+    savePlantNetApiKey: async (apiKey) => saveSettings({ apiKey }),
+    identifyPlant: (formData, { organ = "auto", lang = "pl", nbResults = 4 } = {}) =>
+      plantNetFetch("identify/all", formData, { lang, "nb-results": nbResults, organs: organ }),
+    identifyDisease: (formData, { nbResults = 3 } = {}) =>
+      plantNetFetch("diseases/identify", formData, { "nb-results": nbResults }),
+  };
+
   if (!cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) {
+    settingsLoaded = true;
+    settingsError = "Backend nieskonfigurowany.";
+    emitSettings();
     cardBody.innerHTML = `<p class="muted">Backend nieskonfigurowany. Uruchom <code>node setup-supabase.mjs</code> z repo i wgraj wygenerowany <code>config.js</code>.</p>`;
     return;
   }
 
-  const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-  let user = null;
+  sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   const inviteCardBody = document.querySelector("#invite-card-body");
   window.PA_USER = null;
 
@@ -403,7 +502,7 @@
   async function fullSync(manual) {
     if (!user) return;
     setStatus(manual ? "Synchronizuję…" : "…");
-    await pullMerge();
+    await Promise.all([pullMerge(), loadSettings().catch(() => null)]);
     await pushAll();
     renderInviteUI();
     await renderInvites();
@@ -427,10 +526,18 @@
   sb.auth.onAuthStateChange((_event, session) => {
     user = session?.user || null;
     exposeCurrentUser();
+    settings = { apiKey: "" };
+    settingsLoaded = false;
+    settingsError = "";
+    emitSettings();
     renderCloudUI();
     renderInviteUI();
     if (user) { showAuthScreen(false); fullSync(false); }
-    else if (!localStorage.getItem("pa_skipauth")) showAuthScreen(true);
+    else {
+      settingsLoaded = true;
+      emitSettings();
+      if (!localStorage.getItem("pa_skipauth")) showAuthScreen(true);
+    }
   });
 
   wireAuthScreen();

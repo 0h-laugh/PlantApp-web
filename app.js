@@ -17,8 +17,6 @@ const store = {
   set currentHomeId(v) { v ? localStorage.setItem("pa_current_home", v) : localStorage.removeItem("pa_current_home"); },
   get currentRoomId() { return localStorage.getItem("pa_current_room") || ""; },
   set currentRoomId(v) { v ? localStorage.setItem("pa_current_room", v) : localStorage.removeItem("pa_current_room"); },
-  get apiKey() { return localStorage.getItem("pa_apikey") || ""; },
-  set apiKey(v) { localStorage.setItem("pa_apikey", v); },
   get usage() {
     const u = JSON.parse(localStorage.getItem("pa_usage") || "{}");
     const today = new Date().toISOString().slice(0, 10);
@@ -31,6 +29,25 @@ const store = {
     window.dispatchEvent(new CustomEvent("pa:change"));
   },
 };
+
+
+function cloudSettings() { return window.PlantAppCloud || null; }
+function settingsLoaded() { return !!cloudSettings()?.isSettingsLoaded?.(); }
+function hasPlantNetAccess() { return !!cloudSettings()?.hasPlantNetAccess?.(); }
+function plantNetUnavailableMessage() {
+  const cloud = cloudSettings();
+  if (!cloud) return "Ładuję konfigurację chmury…";
+  if (cloud.getSettingsError?.()) return cloud.getSettingsError();
+  if (!cloud.isConfigured?.()) return "Backend Supabase nie jest skonfigurowany — najpierw wygeneruj config.js.";
+  if (!settingsLoaded()) return "Pobieram konfigurację z chmury…";
+  return "Najpierw dodaj klucz Pl@ntNet w Ustawieniach. Klucz jest przechowywany w chmurze.";
+}
+async function fetchPlantNet(kind, formData, options) {
+  const cloud = cloudSettings();
+  if (!cloud) throw new Error("Chmura nie jest jeszcze gotowa — spróbuj ponownie za chwilę.");
+  if (kind === "identify") return cloud.identifyPlant(formData, options);
+  return cloud.identifyDisease(formData, options);
+}
 
 const DAILY_QUOTA = 500;
 function bumpUsage(kind, remaining) {
@@ -840,7 +857,7 @@ $("#scan-file").addEventListener("change", async (e) => {
   scanBlob = await fileToCompressed(f);
   scanThumb = await blobToDataURL(await fileToCompressed(f, 480, 0.8));
   $("#scan-preview").innerHTML = `<img src="${URL.createObjectURL(scanBlob)}" alt="Podgląd zdjęcia">`;
-  $("#scan-go").disabled = !store.apiKey;
+  updateKeyWarnings();
   $("#scan-results").innerHTML = "";
 });
 $("#organ-chips").addEventListener("click", (e) => {
@@ -859,8 +876,7 @@ $("#scan-go").addEventListener("click", async () => {
     const fd = new FormData();
     fd.append("images", scanBlob, "photo.jpg");
     fd.append("organs", organ);
-    const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${encodeURIComponent(store.apiKey)}&lang=pl&nb-results=4`;
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetchPlantNet("identify", fd, { organ, lang: "pl", nbResults: 4 });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź klucz i Authorized domains w panelu PlantNet.");
     if (res.status === 404) throw new Error("Nie rozpoznano rośliny. Spróbuj wyraźniejszego zdjęcia liścia lub kwiatu.");
     if (res.status === 429) throw new Error("Wyczerpany dzienny limit (500/dzień). Spróbuj jutro.");
@@ -872,7 +888,7 @@ $("#scan-go").addEventListener("click", async () => {
   } catch (err) {
     st.classList.add("error");
     st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — identyfikacja wymaga połączenia.";
-  } finally { $("#scan-go").disabled = false; }
+  } finally { updateKeyWarnings(); }
 });
 
 function renderScanResults(results) {
@@ -944,7 +960,7 @@ $("#doctor-file").addEventListener("change", async (e) => {
   doctorBlob = await fileToCompressed(f);
   doctorThumb = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
   $("#doctor-preview").innerHTML = `<img src="${URL.createObjectURL(doctorBlob)}" alt="Podgląd zdjęcia">`;
-  $("#doctor-go").disabled = !store.apiKey;
+  updateKeyWarnings();
   $("#doctor-results").innerHTML = "";
 });
 
@@ -958,8 +974,7 @@ $("#doctor-go").addEventListener("click", async () => {
     const fd = new FormData();
     fd.append("images", doctorBlob, "photo.jpg");
     fd.append("organs", "auto");
-    const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${encodeURIComponent(store.apiKey)}&nb-results=3`;
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetchPlantNet("disease", fd, { nbResults: 3 });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź panel PlantNet.");
     if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia zmiany — albo trybu „Po objawach”.");
     if (res.status === 429) throw new Error("Limit dzienny wyczerpany. Użyj trybu „Po objawach”.");
@@ -974,7 +989,7 @@ $("#doctor-go").addEventListener("click", async () => {
   } catch (err) {
     st.classList.add("error");
     st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — użyj trybu „Po objawach” (offline).";
-  } finally { $("#doctor-go").disabled = false; }
+  } finally { updateKeyWarnings(); }
 });
 
 function saveDiagnosis(name, score, src) {
@@ -1032,19 +1047,52 @@ function renderSymptoms() {
 
 // ============ USTAWIENIA ============
 function updateKeyWarnings() {
-  const has = !!store.apiKey;
-  $("#scan-keywarn").classList.toggle("hidden", has);
-  $("#doctor-keywarn").classList.toggle("hidden", has);
+  const has = hasPlantNetAccess();
+  const msg = plantNetUnavailableMessage();
+  [$("#scan-keywarn"), $("#doctor-keywarn")].forEach(el => {
+    el.classList.toggle("hidden", has);
+    if (!has) el.innerHTML = `${esc(msg)} <a href="#" data-goto="settings">Ustawienia</a>`;
+  });
   $("#scan-go").disabled = !(has && scanBlob);
   $("#doctor-go").disabled = !(has && doctorBlob);
 }
-$("#save-key").addEventListener("click", () => {
-  const v = $("#api-key").value.trim();
-  store.apiKey = v;
-  $("#key-status").textContent = v ? "✓ Klucz zapisany lokalnie." : "Klucz usunięty.";
+async function refreshApiKeyField() {
+  const cloud = cloudSettings();
+  const input = $("#api-key");
+  const status = $("#key-status");
+  if (!cloud) { status.textContent = "Ładuję połączenie z chmurą…"; updateKeyWarnings(); return; }
+  if (cloud.hasPlantNetProxy?.()) {
+    input.value = "";
+    input.placeholder = "Zapytania obsługuje Supabase Edge Function";
+    status.textContent = "✓ Aktywny bezpieczniejszy wariant: zapytania idą przez Supabase Edge Function, więc sekret nie jest widoczny w przeglądarce.";
+    updateKeyWarnings();
+    return;
+  }
+  input.placeholder = "Wklej klucz API…";
+  if (!cloud.isSettingsLoaded?.()) { status.textContent = "Pobieram klucz z chmury…"; updateKeyWarnings(); return; }
+  if (cloud.getSettingsError?.()) { status.textContent = cloud.getSettingsError(); updateKeyWarnings(); return; }
+  input.value = await cloud.getPlantNetApiKey?.() || "";
+  status.textContent = input.value ? "✓ Klucz pobrany z chmury." : "Brak klucza w chmurze.";
   updateKeyWarnings();
-  toast(v ? "Klucz zapisany" : "Klucz usunięty");
+}
+$("#save-key").addEventListener("click", async () => {
+  const cloud = cloudSettings();
+  const v = $("#api-key").value.trim();
+  if (!cloud?.savePlantNetApiKey) { $("#key-status").textContent = "Chmura nie jest jeszcze gotowa."; return; }
+  $("#save-key").disabled = true;
+  $("#key-status").textContent = "Zapisuję w chmurze…";
+  try {
+    await cloud.savePlantNetApiKey(v);
+    $("#key-status").textContent = v ? "✓ Klucz zapisany w chmurze." : "Klucz usunięty z chmury.";
+    updateKeyWarnings();
+    toast(v ? "Klucz zapisany w chmurze" : "Klucz usunięty z chmury");
+  } catch (err) {
+    $("#key-status").textContent = err.message || "Nie udało się zapisać klucza.";
+  } finally {
+    $("#save-key").disabled = false;
+  }
 });
+window.addEventListener("pa:settings", refreshApiKeyField);
 
 $("#export-btn").addEventListener("click", () => {
   const blob = new Blob([JSON.stringify({ plants: store.plants, homes: store.homes, rooms: store.rooms, currentHomeId: store.currentHomeId, currentRoomId: store.currentRoomId, exported: new Date().toISOString(), version: "1.2" }, null, 2)], { type: "application/json" });
@@ -1099,7 +1147,7 @@ function init() {
     if (sessionStorage.getItem("pa_intro")) intro.classList.add("skip");
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
-  $("#api-key").value = store.apiKey;
+  refreshApiKeyField();
   $("#home-select")?.addEventListener("change", (e) => {
     const v = e.target.value;
     if (v === "__add_home") {

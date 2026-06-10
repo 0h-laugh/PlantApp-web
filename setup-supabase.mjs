@@ -196,6 +196,22 @@ create index if not exists rooms_home_idx on public.rooms(home_id);
 create index if not exists plants_user_idx on public.plants(user_id);
 create index if not exists plants_home_idx on public.plants(home_id);
 create index if not exists plants_room_idx on public.plants(room_id);
+
+create table if not exists public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+alter table public.user_settings enable row level security;
+
+drop policy if exists "user_settings_select_own" on public.user_settings;
+create policy "user_settings_select_own" on public.user_settings for select using (auth.uid() = user_id);
+drop policy if exists "user_settings_insert_own" on public.user_settings;
+create policy "user_settings_insert_own" on public.user_settings for insert with check (auth.uid() = user_id);
+drop policy if exists "user_settings_update_own" on public.user_settings;
+create policy "user_settings_update_own" on public.user_settings for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "user_settings_delete_own" on public.user_settings;
+create policy "user_settings_delete_own" on public.user_settings for delete using (auth.uid() = user_id);
 `;
 
 async function api(path, opts = {}) {
@@ -248,7 +264,7 @@ const genPass = () => "Pa_" + [...crypto.getRandomValues(new Uint8Array(18))].ma
 
   console.log("→ Zakładam schemat + RLS…");
   await api(`/v1/projects/${ref}/database/query`, { method: "POST", body: JSON.stringify({ query: SQL }) });
-  console.log("  ✓ Tabele public.homes, public.rooms i public.plants z politykami RLS");
+  console.log("  ✓ Tabele public.homes, public.rooms, public.plants, public.home_invites i public.user_settings z politykami RLS");
 
   console.log("→ Włączam auto-potwierdzanie e-maili (bez klikania w linki)…");
   await api(`/v1/projects/${ref}/config/auth`, { method: "PATCH", body: JSON.stringify({ mailer_autoconfirm: true }) });

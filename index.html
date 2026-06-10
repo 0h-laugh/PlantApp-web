@@ -147,7 +147,8 @@
 
     <div class="card">
       <h3>Klucz API Pl@ntNet</h3>
-      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz zostaje tylko w Twoim telefonie.</p>
+      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz jest zapisywany w Twojej chmurze Supabase, więc działa na wszystkich zalogowanych urządzeniach.</p>
+      <p class="muted small">Bezpieczniejszy wariant produkcyjny: skonfiguruj Supabase Edge Function jako proxy do Pl@ntNet i trzymaj sekret po stronie funkcji, żeby nie był widoczny w przeglądarce.</p>
       <div class="row">
         <input type="password" id="api-key" placeholder="Wklej klucz API…" autocomplete="off">
         <button id="save-key" class="btn btn-primary">Zapisz</button>
