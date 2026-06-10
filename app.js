@@ -25,6 +25,11 @@ const store = {
     return u.date === today ? u : { date: today, identify: 0, diseases: 0, remaining: null };
   },
   set usage(v) { localStorage.setItem("pa_usage", JSON.stringify(v)); },
+  get rooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); },
+  set rooms(v) {
+    localStorage.setItem("pa_rooms", JSON.stringify(v));
+    window.dispatchEvent(new CustomEvent("pa:change"));
+  },
 };
 
 const DAILY_QUOTA = 500;
@@ -97,6 +102,76 @@ function ensureDefaultPlace() {
   return { homeId: home.id, roomId: room.id };
 }
 
+// ============ POKOJE I MIEJSCA — CRUD ============
+function addRoom(name, homeId = store.currentHomeId) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę pokoju"); return null; }
+  ensureDefaultPlace();
+  const rooms = store.rooms;
+  const now = Date.now();
+  const room = { id: "room_" + uid(), homeId: homeId || store.currentHomeId, name: trimmed, sortOrder: rooms.filter(r => r.homeId === homeId).length, createdAt: now, updatedAt: now };
+  rooms.push(room);
+  store.rooms = rooms;
+  return room;
+}
+function renameRoom(roomId, name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę pokoju"); return false; }
+  const rooms = store.rooms;
+  const room = rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  room.name = trimmed;
+  room.updatedAt = Date.now();
+  store.rooms = rooms;
+  return true;
+}
+function deleteRoom(roomId) {
+  const room = store.rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  if (store.plants.some(p => p.roomId === roomId)) { toast("Najpierw przenieś rośliny z tego pokoju"); return false; }
+  store.rooms = store.rooms.filter(r => r.id !== roomId);
+  if (store.currentRoomId === roomId) store.currentRoomId = "";
+  window.dispatchEvent(new CustomEvent("pa:place-delete", { detail: { kind: "room", id: roomId } }));
+  ensureDefaultPlace();
+  return true;
+}
+function addHome(name, address) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę miejsca"); return null; }
+  const homes = store.homes;
+  const now = Date.now();
+  const home = { id: "home_" + uid(), name: trimmed, address: String(address || "").trim(), createdAt: now, updatedAt: now };
+  homes.push(home);
+  store.homes = homes;
+  store.currentHomeId = home.id;
+  store.currentRoomId = "";
+  ensureDefaultPlace();
+  return home;
+}
+function renameHome(homeId, name, address) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę miejsca"); return false; }
+  const homes = store.homes;
+  const home = homes.find(h => h.id === homeId);
+  if (!home) return false;
+  home.name = trimmed;
+  home.address = String(address || "").trim();
+  home.updatedAt = Date.now();
+  store.homes = homes;
+  return true;
+}
+function movePlantToRoom(plantId, roomId) {
+  const room = store.rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  mutatePlant(plantId, p => { p.roomId = room.id; p.homeId = room.homeId; });
+  return true;
+}
+window.addRoom = addRoom;
+window.renameRoom = renameRoom;
+window.deleteRoom = deleteRoom;
+window.addHome = addHome;
+window.renameHome = renameHome;
+window.movePlantToRoom = movePlantToRoom;
 (function migrate() {
   const def = ensureDefaultPlace();
   const rooms = store.rooms;
@@ -435,12 +510,19 @@ function renderPlaceControls() {
   if (!homeSelect || !roomChips) return;
   ensureDefaultPlace();
   const homes = store.homes;
-  homeSelect.innerHTML = homes.map(h => `<option value="${esc(h.id)}" ${h.id === store.currentHomeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("");
+  homeSelect.innerHTML = homes.map(h => `<option value="${esc(h.id)}" ${h.id === store.currentHomeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("")
+    + `<option value="__edit_home">✎ Edytuj to miejsce…</option><option value="__add_home">＋ Dodaj miejsce…</option>`;
+  homeSelect.value = store.currentHomeId;
   const rooms = roomsForHome();
   const activeRoomOk = !store.currentRoomId || rooms.some(r => r.id === store.currentRoomId);
   if (!activeRoomOk) store.currentRoomId = "";
+  const activeRoom = rooms.find(r => r.id === store.currentRoomId);
+  const activeRoomEmpty = activeRoom && !store.plants.some(p => p.roomId === activeRoom.id);
   roomChips.innerHTML = `<button class="chip ${!store.currentRoomId ? "active" : ""}" data-room="">Wszystkie pokoje</button>`
-    + rooms.map(r => `<button class="chip ${r.id === store.currentRoomId ? "active" : ""}" data-room="${esc(r.id)}">${esc(r.name)}</button>`).join("");
+    + rooms.map(r => `<button class="chip ${r.id === store.currentRoomId ? "active" : ""}" data-room="${esc(r.id)}">${esc(r.name)}</button>`).join("")
+    + `<button class="chip chip-action" data-action="add-room" aria-label="Dodaj pokój">＋ Pokój</button>`
+    + (activeRoom ? `<button class="chip chip-action" data-action="rename-room" aria-label="Zmień nazwę pokoju">✎</button>` : "")
+    + (activeRoomEmpty ? `<button class="chip chip-action chip-danger" data-action="delete-room" aria-label="Usuń pokój">✕</button>` : "");
   const home = currentHome();
   const count = filteredPlants().length;
   if (hint) hint.textContent = `${count} ${count === 1 ? "roślina" : count < 5 ? "rośliny" : "roślin"} · ${homeLabel(home)}${store.currentRoomId ? " · " + roomName(store.currentRoomId) : ""}`;
@@ -525,6 +607,10 @@ function openDetail(id) {
   const d = daysUntilWater(p);
   const fert = daysUntilFert(p);
   const interval = currentInterval(p);
+  ensureDefaultPlace();
+  const homes = store.homes;
+  const rooms = roomsForHome(p.homeId);
+  const activeRoomId = p.roomId;
   const journal = (p.journal || []).slice().sort((a, b) => b.t - a.t);
 
   // ewolucja: wszystkie zdjęcia w czasie (start + dziennik), chronologicznie
@@ -541,6 +627,17 @@ function openDetail(id) {
         <div class="detail-latin">📍 ${esc(homeLabel(store.homes.find(h => h.id === p.homeId) || currentHome()))} · ${esc(roomName(p.roomId))}</div>
         ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px">⚠️ Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px">✓ Bezpieczna dla zwierząt</div>` : ""}
       </div>
+    </div>
+
+    <div class="card room-select-card">
+      <label for="plant-home" class="sec-k">Miejsce</label>
+      <select id="plant-home" class="room-select">
+        ${homes.map(h => `<option value="${esc(h.id)}" ${h.id === p.homeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("")}
+      </select>
+      <label for="plant-room" class="sec-k" style="margin-top:10px">Pokój</label>
+      <select id="plant-room" class="room-select">
+        ${rooms.map(r => `<option value="${esc(r.id)}" ${r.id === activeRoomId ? "selected" : ""}>${esc(r.name)}</option>`).join("")}
+      </select>
     </div>
 
     <div class="water-block">
@@ -616,6 +713,22 @@ function openDetail(id) {
     <button class="btn btn-danger btn-block" id="delete-plant">Usuń roślinę</button>
   `;
 
+  $("#plant-room").onchange = (e) => {
+    if (movePlantToRoom(id, e.target.value)) toast("Przeniesiono roślinę");
+    openDetail(id);
+  };
+  $("#plant-home").onchange = (e) => {
+    const homeId = e.target.value;
+    const targetRooms = roomsForHome(homeId);
+    let room = targetRooms[0];
+    if (!room) {
+      const now = Date.now();
+      room = { id: "room_" + uid(), homeId, name: DEFAULT_ROOM_NAME, sortOrder: 0, createdAt: now, updatedAt: now };
+      store.rooms = [...store.rooms, room];
+    }
+    if (movePlantToRoom(id, room.id)) toast("Przeniesiono roślinę");
+    openDetail(id);
+  };
   $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
   const fertBtn = $("#fert-now");
   if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
@@ -655,7 +768,15 @@ function openDetail(id) {
 function mutatePlant(id, fn) {
   const plants = store.plants;
   const p = plants.find(x => x.id === id);
-  if (p) { fn(p); p.updatedAt = Date.now(); store.plants = plants; }
+  if (p) {
+    fn(p);
+    const { rooms, defaultId } = normalizeRoomsAndPlants();
+    const validRoomIds = new Set(rooms.map(r => r.id));
+    if (!validRoomIds.has(getPlantRoomId(p))) applyPlantRoom(p, defaultId);
+    else applyPlantRoom(p, getPlantRoomId(p));
+    p.updatedAt = Date.now();
+    store.plants = plants;
+  }
 }
 
 // ============ ZDJĘCIA ============
@@ -946,8 +1067,39 @@ function init() {
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
   $("#api-key").value = store.apiKey;
-  $("#home-select")?.addEventListener("change", (e) => { store.currentHomeId = e.target.value; store.currentRoomId = ""; renderPlants(); });
-  $("#room-chips")?.addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (!c) return; store.currentRoomId = c.dataset.room || ""; renderPlants(); });
+  $("#home-select")?.addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (v === "__add_home") {
+      const name = prompt("Nazwa miejsca (np. „Mieszkanie w Krakowie”):");
+      if (name !== null) { const home = addHome(name, prompt("Adres (opcjonalnie):") || ""); if (home) toast("Dodano miejsce"); }
+    } else if (v === "__edit_home") {
+      const home = currentHome();
+      const name = prompt("Nazwa miejsca:", home.name);
+      if (name !== null && renameHome(home.id, name, prompt("Adres (opcjonalnie):", home.address || "") || "")) toast("Zapisano miejsce");
+    } else {
+      store.currentHomeId = v;
+      store.currentRoomId = "";
+    }
+    renderPlants();
+  });
+  $("#room-chips")?.addEventListener("click", (e) => {
+    const c = e.target.closest(".chip"); if (!c) return;
+    const action = c.dataset.action;
+    if (action === "add-room") {
+      const name = prompt("Nazwa pokoju (np. „Salon”):");
+      if (name !== null) { const room = addRoom(name); if (room) { store.currentRoomId = room.id; toast("Dodano pokój"); } }
+    } else if (action === "rename-room") {
+      const room = store.rooms.find(r => r.id === store.currentRoomId);
+      const name = prompt("Nowa nazwa pokoju:", room?.name || "");
+      if (name !== null && renameRoom(store.currentRoomId, name)) toast("Zmieniono nazwę pokoju");
+    } else if (action === "delete-room") {
+      const room = store.rooms.find(r => r.id === store.currentRoomId);
+      if (room && confirm(`Usunąć pusty pokój „${room.name}”?`) && deleteRoom(room.id)) toast("Usunięto pokój");
+    } else {
+      store.currentRoomId = c.dataset.room || "";
+    }
+    renderPlants();
+  });
   renderSymptoms();
   renderPlants();
   renderDoctorPlantPicker();

@@ -417,3 +417,9 @@ body.auth-open { overflow: hidden; }
 .assistant-form input:focus-visible { outline: 2px solid var(--leaf); border-color: var(--leaf); }
 .assistant-form .btn { padding: 12px 14px; }
 .assistant-warning { color: var(--alert); font-size: .78rem; line-height: 1.4; margin-top: 8px; }
+
+/* ---------- v1.3: pokoje ---------- */
+.chip-action { color: var(--ink-dim); border-style: dashed; }
+.chip-danger { color: var(--alert); }
+.room-select-card { margin-bottom: 12px; }
+.room-select { width: 100%; min-height: 42px; border-radius: 12px; border: 1px solid var(--card-edge); background: var(--bg-soft); color: var(--ink); padding: 0 12px; font: inherit; font-weight: 700; }
