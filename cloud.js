@@ -1,6 +1,6 @@
 /* PlantApp cloud — konto + synchronizacja multi-device (Supabase).
    Offline-first: localStorage jest źródłem prawdy na urządzeniu,
-   chmura to replika scalana per-roślina po updated_at (last-write-wins). */
+   chmura to replika scalana per-roślina po updated_at z łączeniem dzienników. */
 "use strict";
 
 (function () {
@@ -16,6 +16,16 @@
   const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   let user = null;
   const inviteCardBody = document.querySelector("#invite-card-body");
+  window.PA_USER = null;
+
+  function displayNameFor(u) {
+    return u?.user_metadata?.full_name || u?.user_metadata?.name || u?.email || null;
+  }
+
+  function exposeCurrentUser() {
+    window.PA_USER = user ? { id: user.id, email: user.email, displayName: displayNameFor(user) } : null;
+    window.dispatchEvent(new CustomEvent("pa:user", { detail: window.PA_USER }));
+  }
   const authScreen = document.querySelector("#view-auth");
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
 
@@ -226,6 +236,41 @@
   }
 
   // ---------- SYNC ----------
+
+  function journalKey(e) {
+    if (e.id) return "id:" + e.id;
+    return [e.type || "", e.t || "", e.userId || "", e.userEmail || "", e.displayName || "", e.text || "", e.name || "", e.score || "", e.src || "", e.photo || ""].join("|");
+  }
+
+  function journalTime(e) { return Number(e?.t || 0) || 0; }
+
+  function mergeJournal(localJournal = [], remoteJournal = []) {
+    const merged = new Map();
+    [...localJournal, ...remoteJournal].forEach(entry => {
+      if (!entry) return;
+      const normalized = { userId: null, userEmail: null, displayName: "local", ...entry };
+      merged.set(journalKey(normalized), normalized);
+    });
+    return [...merged.values()].sort((a, b) => journalTime(a) - journalTime(b));
+  }
+
+  function latestJournalEntry(journal, type) {
+    return journal.filter(e => e.type === type).sort((a, b) => journalTime(b) - journalTime(a))[0];
+  }
+
+  function mergePlantData(localPlant, remotePlant, remoteT) {
+    if (!localPlant) return remotePlant;
+    const localT = localPlant.updatedAt || localPlant.added || 0;
+    const base = remoteT > localT ? { ...remotePlant } : { ...localPlant };
+    const journal = mergeJournal(localPlant.journal || [], remotePlant.journal || []);
+    base.journal = journal;
+    const lastWater = latestJournalEntry(journal, "water");
+    const lastFert = latestJournalEntry(journal, "fert");
+    if (lastWater) base.lastWatered = lastWater.t;
+    if (lastFert) base.lastFertilized = lastFert.t;
+    base.updatedAt = Math.max(localT, remoteT, base.updatedAt || 0);
+    return base;
+  }
   function localPlants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); }
   function localHomes() { return JSON.parse(localStorage.getItem("pa_homes") || "[]"); }
   function localRooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); }
@@ -344,12 +389,12 @@
         continue;
       }
       if (deadHere.has(row.id)) continue; // lokalnie usunięta, tombstone poleci przy push
-      if (!mine || remoteT > mineT) {
-        byId[row.id] = { ...row.data, homeId: row.data?.homeId || row.home_id || "", roomId: row.data?.roomId || row.room_id || "", _cloudUserId: row.user_id };
-        changed = true;
-      } else if (mine && !mine._cloudUserId) {
-        mine._cloudUserId = row.user_id;
-        changed = true;
+      const remoteData = { ...row.data, homeId: row.data?.homeId || row.home_id || "", roomId: row.data?.roomId || row.room_id || "", _cloudUserId: row.user_id };
+      if (!mine) { byId[row.id] = remoteData; changed = true; }
+      else {
+        const merged = mergePlantData(mine, remoteData, remoteT);
+        if (!merged._cloudUserId) merged._cloudUserId = row.user_id;
+        if (JSON.stringify(merged) !== JSON.stringify(mine)) { byId[row.id] = merged; changed = true; }
       }
     }
     if (changed) saveLocal(Object.values(byId));
@@ -367,7 +412,7 @@
   function schedulePush() {
     if (!user) return;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(pushAll, 4000);
+    pushTimer = setTimeout(() => fullSync(false), 4000);
   }
 
   // ---------- ZDARZENIA ----------
@@ -381,6 +426,7 @@
 
   sb.auth.onAuthStateChange((_event, session) => {
     user = session?.user || null;
+    exposeCurrentUser();
     renderCloudUI();
     renderInviteUI();
     if (user) { showAuthScreen(false); fullSync(false); }

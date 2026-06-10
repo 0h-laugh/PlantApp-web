@@ -63,9 +63,33 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const DAY = 86400000;
+const DEVICE_KEY = "pa_device_id";
+function deviceId() {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id) { id = "local-" + uid(); localStorage.setItem(DEVICE_KEY, id); }
+  return id;
+}
+function currentJournalAuthor() {
+  const u = window.PA_USER || null;
+  return {
+    userId: u?.id || null,
+    userEmail: u?.email || null,
+    displayName: u?.displayName || u?.email || (u ? "użytkownik" : "local"),
+    sourceDevice: deviceId(),
+  };
+}
 
 function isSummer() { const m = new Date().getMonth() + 1; return m >= 4 && m <= 9; }
 function fmtDate(t) { return new Date(t).toLocaleDateString("pl-PL", { day: "numeric", month: "short", year: new Date(t).getFullYear() !== new Date().getFullYear() ? "numeric" : undefined }); }
+function fmtWhen(t) {
+  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+  const startThat = new Date(t); startThat.setHours(0, 0, 0, 0);
+  const diff = Math.round((startToday - startThat) / DAY);
+  if (diff === 0) return "dzisiaj";
+  if (diff === 1) return "wczoraj";
+  if (diff > 1 && diff < 7) return diff + " dni temu";
+  return fmtDate(t);
+}
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
@@ -177,15 +201,21 @@ window.movePlantToRoom = movePlantToRoom;
   const rooms = store.rooms;
   const plants = store.plants;
   let changed = false;
+  const legacyAuthor = { userId: null, userEmail: null, displayName: "local" };
   plants.forEach(p => {
     if (!p.journal) {
-      p.journal = [{ t: p.added || Date.now(), type: "added" }];
-      (p.history || []).forEach(t => p.journal.push({ t, type: "water" }));
+      p.journal = [{ t: p.added || Date.now(), type: "added", ...legacyAuthor }];
+      (p.history || []).forEach(t => p.journal.push({ t, type: "water", ...legacyAuthor }));
       delete p.history;
       changed = true;
     }
     if (!p.homeId || !store.homes.some(h => h.id === p.homeId)) { p.homeId = def.homeId; changed = true; }
     if (!p.roomId || !rooms.some(r => r.id === p.roomId && r.homeId === p.homeId)) { p.roomId = def.roomId; changed = true; }
+    (p.journal || []).forEach(e => {
+      if (!("userId" in e)) { e.userId = null; changed = true; }
+      if (!("userEmail" in e)) { e.userEmail = null; changed = true; }
+      if (!("displayName" in e)) { e.displayName = "local"; changed = true; }
+    });
   });
   if (changed) store.plants = plants;
 })();
@@ -196,10 +226,12 @@ function addJournal(plantId, entry) {
   const p = plants.find(x => x.id === plantId);
   if (!p) return false;
   p.journal = p.journal || [];
-  p.journal.push({ t: Date.now(), ...entry });
-  p.updatedAt = Date.now();
-  if (entry.type === "water") p.lastWatered = entry.t || Date.now();
-  if (entry.type === "fert") p.lastFertilized = entry.t || Date.now();
+  const now = Date.now();
+  const journalEntry = { id: uid(), t: now, ...currentJournalAuthor(), ...entry };
+  p.journal.push(journalEntry);
+  p.updatedAt = now;
+  if (entry.type === "water") p.lastWatered = journalEntry.t;
+  if (entry.type === "fert") p.lastFertilized = journalEntry.t;
   store.plants = plants;
   return true;
 }
@@ -591,13 +623,14 @@ function renderPlants() {
 }
 
 // ============ SZCZEGÓŁY ROŚLINY: dziennik + ewolucja ============
+function journalAuthor(e) { return e.displayName || e.userEmail || (e.userId ? "użytkownik" : "local"); }
 const JOURNAL_META = {
-  added: { ico: "🌱", label: () => "Dodano do kolekcji" },
-  water: { ico: "💧", label: () => "Podlano" },
-  fert: { ico: "🌿", label: () => "Nawożono" },
-  diagnosis: { ico: "🩺", label: e => `Diagnoza: ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
-  photo: { ico: "📷", label: () => "Zdjęcie" },
-  note: { ico: "📝", label: e => esc(e.text) },
+  added: { ico: "🌱", label: e => `Dodał/a ${esc(journalAuthor(e))} do kolekcji` },
+  water: { ico: "💧", label: e => `Podlał/a ${esc(journalAuthor(e))}` },
+  fert: { ico: "🌿", label: e => `Nawiózł/a ${esc(journalAuthor(e))}` },
+  diagnosis: { ico: "🩺", label: e => `Diagnoza (${esc(journalAuthor(e))}): ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
+  photo: { ico: "📷", label: e => `Zdjęcie — ${esc(journalAuthor(e))}` },
+  note: { ico: "📝", label: e => `${esc(journalAuthor(e))}: ${esc(e.text)}` },
 };
 
 function openDetail(id) {
@@ -702,7 +735,7 @@ function openDetail(id) {
           <div class="tl-ico">${m.ico}</div>
           <div class="tl-body">
             <div class="tl-label">${m.label(e)}</div>
-            <div class="tl-date">${fmtDate(e.t)}</div>
+            <div class="tl-date">${fmtWhen(e.t)}</div>
             ${e.photo && e.type !== "photo" ? `<img class="tl-thumb" src="${e.photo}" alt="" loading="lazy">` : ""}
           </div>
           <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
@@ -874,7 +907,7 @@ function addPlant(latin, displayName) {
   const place = ensureDefaultPlace();
   const homeId = store.currentHomeId || place.homeId;
   const roomId = store.currentRoomId || place.roomId;
-  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
+  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ id: uid(), t: Date.now(), type: "added", ...currentJournalAuthor() }] });
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
