@@ -323,7 +323,7 @@
         <p class="muted small">Supabase jest źródłem synchronizacji. Dane w tej przeglądarce są cache’em offline i buforem zmian wykonanych bez sieci.</p>
         <div id="sync-status" class="muted small">Status synchronizacji: oczekiwanie…</div>
         <div class="row">
-          <button class="btn btn-primary" id="cl-sync">🔄 Synchronizuj teraz</button>
+          <button class="btn btn-primary" id="cl-sync"><svg class="ic" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11 a8 8 0 0 0-13.7-4.6 L4 8 M4 4 v4 h4 M4 13 a8 8 0 0 0 13.7 4.6 L20 16 M20 20 v-4 h-4"/></svg> Synchronizuj teraz</button>
           <button class="btn btn-ghost" id="cl-logout">Wyloguj</button>
         </div>`;
       document.querySelector("#cl-sync").onclick = () => fullSync(true);

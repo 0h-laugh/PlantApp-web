@@ -6,7 +6,7 @@ const store = {
   get plants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); },
   set plants(v) {
     try { localStorage.setItem("pa_plants", JSON.stringify(v)); }
-    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub włącz synchronizację"); }
+    catch (e) { toast("Pamięć pełna — usuń stare zdjęcia z dziennika lub włącz synchronizację"); }
     window.dispatchEvent(new CustomEvent("pa:change"));
   },
   get homes() { return JSON.parse(localStorage.getItem("pa_homes") || "[]"); },
@@ -112,6 +112,55 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+
+// ============ MOTYW (Nocna oranżeria / Jasna szklarnia) ============
+const Theme = {
+  KEY: "pa:theme",
+  apply(t) {
+    const theme = t === "light" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.content = theme === "light" ? "#F4F2EA" : "#0C1410";
+    localStorage.setItem(Theme.KEY, theme);
+    document.querySelectorAll("[data-theme-pick]").forEach(b =>
+      b.classList.toggle("active", b.dataset.themePick === theme));
+  },
+  init() {
+    Theme.apply(localStorage.getItem(Theme.KEY) || "dark");
+    document.querySelectorAll("[data-theme-pick]").forEach(b =>
+      b.addEventListener("click", () => Theme.apply(b.dataset.themePick)));
+  },
+};
+Theme.init();
+
+// ============ IKONY SVG (stroke, currentColor) — zamiast emoji ============
+const ICONS = {
+  drop: '<path d="M12 3.5 C 8 8, 6 11, 6 14.5 a6 6 0 0 0 12 0 C 18 11, 16 8, 12 3.5 Z"/>',
+  leaf: '<path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7"/>',
+  sprout: '<path d="M12 20 V11"/><path d="M12 13 C 12 9.5 9.2 7.5 5.5 7.5 C 5.5 11 8.3 13 12 13 Z"/><path d="M12 11 C 12 8 14.5 6.2 18 6.2 C 18 9.2 15.5 11 12 11 Z"/>',
+  cross: '<circle cx="12" cy="12" r="8.5"/><path d="M12 8 v8 M8 12 h8"/>',
+  camera: '<path d="M3 9 a1 1 0 0 1 1-1 h2.5 L8 6 h8 l1.5 2 H20 a1 1 0 0 1 1 1 v8 a1 1 0 0 1-1 1 H4 a1 1 0 0 1-1-1 Z"/><circle cx="12" cy="13" r="3.2"/>',
+  note: '<path d="M6 3 h8 l4 4 v14 H6 Z M14 3 v4 h4"/><path d="M9 12 h6 M9 16 h4"/>',
+  pencil: '<path d="M4 20 l1-4 L15.5 5.5 a2.1 2.1 0 0 1 3 3 L8 19 Z M13.5 7.5 l3 3"/>',
+  pin: '<path d="M12 21 C 7 15.5 5.5 12.5 5.5 9.5 a6.5 6.5 0 0 1 13 0 C 18.5 12.5 17 15.5 12 21 Z"/><circle cx="12" cy="9.5" r="2.3"/>',
+  warn: '<path d="M12 4 L21 19 H3 Z"/><path d="M12 10 v4"/><path d="M12 16.6 v.2"/>',
+  sun: '<circle cx="12" cy="12" r="3.7"/><path d="M12 3 v2.2 M12 18.8 V21 M3 12 h2.2 M18.8 12 H21 M5.6 5.6 l1.6 1.6 M16.8 16.8 l1.6 1.6 M18.4 5.6 l-1.6 1.6 M7.2 16.8 l-1.6 1.6"/>',
+  wind: '<path d="M4 9 h9 a2.4 2.4 0 1 0-2.4-2.4 M4 13 h13 a2.4 2.4 0 1 1-2.4 2.4 M4 17 h6.5"/>',
+  bulb: '<path d="M9.2 17.5 h5.6 M10.2 20.5 h3.6 M12 3.5 a6 6 0 0 1 4 10.4 c-.7.7-1 1.4-1 2.1 H9 c0-.7-.3-1.4-1-2.1 a6 6 0 0 1 4-10.4 Z"/>',
+  book: '<path d="M5.5 5 a2 2 0 0 1 2-2 H18 v14 H7.5 a2 2 0 0 0-2 2 Z M18 17 H7.5 a2 2 0 0 0-2 2"/>',
+  sync: '<path d="M20 11 a8 8 0 0 0-13.7-4.6 L4 8 M4 4 v4 h4 M4 13 a8 8 0 0 0 13.7 4.6 L20 16 M20 20 v-4 h-4"/>',
+  bell: '<path d="M6 16.5 v-5 a6 6 0 0 1 12 0 v5 l1.6 1.8 H4.4 Z M9.7 20 a2.3 2.3 0 0 0 4.6 0"/>',
+  cloud: '<path d="M7 18 h9.5 a3.5 3.5 0 0 0 .4-7 A5 5 0 0 0 7.4 9.7 A3.6 3.6 0 0 0 7 18 Z"/>',
+  spark: '<path d="M12 3.5 l1.7 4.8 L18.5 10 l-4.8 1.7 L12 16.5 l-1.7-4.8 L5.5 10 l4.8-1.7 Z"/>',
+  house: '<path d="M4 11 L12 4 l8 7 M6 9.6 V19 h12 V9.6"/>',
+  dry: '<circle cx="12" cy="8.5" r="3.3"/><path d="M4 16.5 q2-1.8 4 0 t4 0 t4 0 M4 19.5 q2-1.8 4 0 t4 0 t4 0"/>',
+  scan: '<path d="M4 8 V5.5 A1.5 1.5 0 0 1 5.5 4 H8 M16 4 h2.5 A1.5 1.5 0 0 1 20 5.5 V8 M20 16 v2.5 A1.5 1.5 0 0 1 18.5 20 H16 M8 20 H5.5 A1.5 1.5 0 0 1 4 18.5 V16 M12 15.5 a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7 Z"/>',
+};
+function icon(name, size = 18, cls = "") {
+  const path = ICONS[name];
+  if (!path) return "";
+  return `<svg class="ic${cls ? " " + cls : ""}" viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+}
 
 function entryPhotos(entry) {
   if (Array.isArray(entry.photos)) return entry.photos.filter(Boolean);
@@ -315,15 +364,15 @@ function plantInsights(p) {
   const care = careFor(p.latin);
   const interval = currentInterval(p);
 
-  if (d <= 0) out.push({ prio: 0, ico: "💧", text: `Podlej dziś${d < 0 ? ` — spóźnienie ${-d} ${-d === 1 ? "dzień" : "dni"}` : ""}.` });
+  if (d <= 0) out.push({ prio: 0, ico: "drop", text: `Podlej dziś${d < 0 ? ` — spóźnienie ${-d} ${-d === 1 ? "dzień" : "dni"}` : ""}.` });
 
   // dyscyplina podlewania: realny rytm z dziennika vs plan
   const waters = j.filter(e => e.type === "water").map(e => e.t).sort((a, b) => a - b);
   if (waters.length >= 4) {
     const gaps = waters.slice(1).map((t, i) => (t - waters[i]) / DAY);
     const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
-    if (avg < interval * 0.65) out.push({ prio: 1, ico: "⚠️", text: `Podlewasz średnio co ${avg.toFixed(1)} dnia przy planie co ${interval} — ryzyko przelania. Sprawdzaj palcem 2–3 cm ziemi przed podlaniem.` });
-    else if (avg > interval * 1.45) out.push({ prio: 1, ico: "🏜️", text: `Realny rytm to co ~${Math.round(avg)} dni przy planie co ${interval} — roślina bywa przesuszana. Skróć odstępy albo dostosuj plan przyciskiem ±.` });
+    if (avg < interval * 0.65) out.push({ prio: 1, ico: "warn", text: `Podlewasz średnio co ${avg.toFixed(1)} dnia przy planie co ${interval} — ryzyko przelania. Sprawdzaj palcem 2–3 cm ziemi przed podlaniem.` });
+    else if (avg > interval * 1.45) out.push({ prio: 1, ico: "dry", text: `Realny rytm to co ~${Math.round(avg)} dni przy planie co ${interval} — roślina bywa przesuszana. Skróć odstępy albo dostosuj plan przyciskiem ±.` });
   }
 
   // kontrola po diagnozie
@@ -332,16 +381,16 @@ function plantInsights(p) {
     const days = Math.floor((Date.now() - diag.t) / DAY);
     if (days >= 3 && days <= 21) {
       const act = diagAction(diag.name);
-      out.push({ prio: 0, ico: "🩺", text: `${days} dni po diagnozie „${diag.name}” — sprawdź, czy objawy ustępują.${act ? " Przypomnienie: " + act.split(".")[0] + "." : ""} Jeśli nie ma poprawy, zrób kontrolne zdjęcie w Doktorze.` });
+      out.push({ prio: 0, ico: "cross", text: `${days} dni po diagnozie „${diag.name}” — sprawdź, czy objawy ustępują.${act ? " Przypomnienie: " + act.split(".")[0] + "." : ""} Jeśli nie ma poprawy, zrób kontrolne zdjęcie w Doktorze.` });
     }
   }
 
-  if (f !== null && f <= 0) out.push({ prio: 1, ico: "🌿", text: "Czas nawieźć — ostatnie nawożenie ponad miesiąc temu w sezonie wzrostu." });
-  if (!isSummer() && /wysok/i.test(care.humidity)) out.push({ prio: 2, ico: "💨", text: "Sezon grzewczy + roślina lubiąca wilgoć: zraszaj lub dostaw nawilżacz, obserwuj końcówki liści." });
+  if (f !== null && f <= 0) out.push({ prio: 1, ico: "leaf", text: "Czas nawieźć — ostatnie nawożenie ponad miesiąc temu w sezonie wzrostu." });
+  if (!isSummer() && /wysok/i.test(care.humidity)) out.push({ prio: 2, ico: "wind", text: "Sezon grzewczy + roślina lubiąca wilgoć: zraszaj lub dostaw nawilżacz, obserwuj końcówki liści." });
 
   const photos = j.filter(e => entryPhotos(e).length);
   const lastPhoto = Math.max(p.added || 0, ...photos.map(e => e.t));
-  if (Date.now() - lastPhoto > 30 * DAY) out.push({ prio: 3, ico: "📷", text: "Ponad miesiąc bez zdjęcia — dodaj jedno do ewolucji, łatwiej wychwycisz powolne zmiany." });
+  if (Date.now() - lastPhoto > 30 * DAY) out.push({ prio: 3, ico: "camera", text: "Ponad miesiąc bez zdjęcia — dodaj jedno do ewolucji, łatwiej wychwycisz powolne zmiany." });
 
   return out.sort((a, b) => a.prio - b.prio);
 }
@@ -362,44 +411,60 @@ przy poważnych objawach sugeruj tryb "Doktor" w aplikacji. Nie używaj formatow
 zwykły tekst, maksymalnie kilka zdań, chyba że użytkownik prosi o więcej.`;
 // Dostawcy zgodni z API OpenAI (chat/completions), wołani wprost z przeglądarki.
 const ASSISTANT_PROVIDERS = {
-  openrouter: { label: "OpenRouter (darmowe modele)", baseUrl: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.3-70b-instruct:free", keyUrl: "https://openrouter.ai/keys" },
+  openrouter: { label: "OpenRouter (darmowe modele)", baseUrl: "https://openrouter.ai/api/v1", model: "openai/gpt-oss-120b:free", keyUrl: "https://openrouter.ai/keys" },
   groq: { label: "Groq (darmowy limit)", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", keyUrl: "https://console.groq.com/keys" },
   custom: { label: "Własny adres (OpenAI-compatible)", baseUrl: "", model: "", keyUrl: "" },
 };
 function resolveAssistantConfig(cfg) {
   if (!cfg) return null;
   const preset = ASSISTANT_PROVIDERS[cfg.provider] || ASSISTANT_PROVIDERS.custom;
-  const baseUrl = (cfg.baseUrl || preset.baseUrl || "").replace(/\/+$/, "");
+  // Tolerate users (or older saved configs) that pasted the full endpoint into baseUrl:
+  // strip a trailing /chat/completions and any trailing slashes so we never double it.
+  const baseUrl = (cfg.baseUrl || preset.baseUrl || "")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/, "")
+    .replace(/\/+$/, "");
   const model = cfg.model || preset.model;
   if (!baseUrl || !model || !cfg.apiKey) return null;
   return { baseUrl, model, apiKey: cfg.apiKey };
 }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function callAssistantLLM(cfg, context, history) {
   const messages = [
     { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
     { role: "user", content: `Kontekst rośliny (JSON):\n${JSON.stringify(context)}` },
     ...history,
   ];
-  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${cfg.apiKey}`,
-      "HTTP-Referer": location.origin,
-      "X-Title": "PlantApp",
-    },
-    body: JSON.stringify({ model: cfg.model, max_tokens: 1024, messages }),
-  });
-  if (!res.ok) {
+  // Free models are frequently throttled upstream with a short retry-after; retry a few
+  // times before surfacing the error so a transient 429 doesn't break the conversation.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cfg.apiKey}`,
+        "HTTP-Referer": location.origin,
+        "X-Title": "PlantApp",
+      },
+      body: JSON.stringify({ model: cfg.model, max_tokens: 1024, messages }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const reply = data?.choices?.[0]?.message?.content;
+      if (!reply) throw new Error("Dostawca AI nie zwrócił odpowiedzi.");
+      return String(reply).trim();
+    }
     let detail = ""; try { detail = (await res.json())?.error?.message || ""; } catch {}
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API asystenta odrzucony — sprawdź go w Ustawieniach → Asystent AI.");
-    if (res.status === 429) throw new Error("Limit darmowych zapytań wyczerpany — spróbuj za chwilę lub zmień model/dostawcę.");
+    if (res.status === 429) {
+      if (attempt < MAX_ATTEMPTS) { await sleep(1200 * attempt); continue; }
+      throw new Error("Darmowy model jest chwilowo przeciążony — spróbuj ponownie za moment lub zmień model/dostawcę w Ustawieniach.");
+    }
     throw new Error(`Błąd dostawcy AI (${res.status}${detail ? ": " + detail : ""}).`);
   }
-  const data = await res.json();
-  const reply = data?.choices?.[0]?.message?.content;
-  if (!reply) throw new Error("Dostawca AI nie zwrócił odpowiedzi.");
-  return String(reply).trim();
+  throw new Error("Dostawca AI nie odpowiedział — spróbuj ponownie.");
 }
 let activeAssistantPlantId = null;
 let assistantSending = false;
@@ -516,7 +581,7 @@ function renderAssistantMessages(plantId) {
   shell.innerHTML = `
     <div class="assistant-chat-head">
       <div>
-        <div class="sec-k">🤖 AI asystent</div>
+        <div class="sec-k">${icon("spark",16)} AI asystent</div>
         <p class="assistant-safe">Asystent daje porady ogrodnicze na podstawie danych rośliny i nie zastępuje profesjonalnej diagnozy ani badania laboratoryjnego.</p>
       </div>
     </div>
@@ -648,8 +713,11 @@ function goto(view, options = {}) {
   const isSameDestination = fromView === view && previousPlantId === currentPlantId;
 
   if (fromView !== view) animateViewChange(fromEl, target, direction);
+  const navView = view === "plant-detail" ? "plants" : view;
   $$(".view").forEach(v => v.classList.toggle("active", v === target));
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === (view === "plant-detail" ? "plants" : view)));
+  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === navView));
+  $$(".side-link").forEach(t => t.classList.toggle("active", t.dataset.goto === navView));
+  document.body.classList.toggle("on-plants", view === "plants");
   currentView = view;
   window.scrollTo(0, 0);
   applyViewSideEffects(view);
@@ -735,7 +803,7 @@ function ringSVG(plant, size = 54) {
       <circle class="ring-fill ${overdue ? "overdue" : ""}" cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke-width="5"
         stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - frac)}"/>
     </svg>
-    <div class="ring-label">${overdue ? "💧" : daysLeft}<small>${overdue ? "" : (daysLeft === 1 ? "dzień" : "dni")}</small></div>
+    <div class="ring-label">${overdue ? icon("drop", Math.round(size*0.34)) : daysLeft}<small>${overdue ? "dziś" : (daysLeft === 1 ? "dzień" : "dni")}</small></div>
   </div>`;
 }
 
@@ -775,7 +843,115 @@ function renderPlaceControls() {
   if (hint) hint.textContent = `${count} ${count === 1 ? "roślina" : count < 5 ? "rośliny" : "roślin"} · ${homeLabel(home)}${store.currentRoomId ? " · " + roomName(store.currentRoomId) : ""}`;
 }
 
-// ============ LISTA ROŚLIN (siatka kafli) ============
+// ============ LISTA ROŚLIN (wiersze + karta „Dzisiaj") ============
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 6) return "Dobranoc";
+  if (h < 12) return "Dzień dobry";
+  if (h < 18) return "Miłego dnia";
+  return "Dobry wieczór";
+}
+function userInitials() {
+  const u = window.PA_USER;
+  const src = u?.displayName || u?.email || "";
+  const letters = src.replace(/[^A-Za-zŻŹĆĄŚĘŁÓŃżźćąśęłóń]/g, " ").trim().split(/\s+/).filter(Boolean);
+  if (letters.length >= 2) return (letters[0][0] + letters[1][0]).toUpperCase();
+  if (letters.length === 1) return letters[0].slice(0, 2).toUpperCase();
+  return "PA";
+}
+// mini-pierścień na wierszu rośliny: wypełnia się w miarę zbliżania terminu podlania
+function miniRingSVG(plant) {
+  const interval = currentInterval(plant);
+  const daysLeft = daysUntilWater(plant);
+  const due = daysLeft <= 0;
+  const C = 75.398; // 2π·12
+  const elapsed = Math.max(0.04, Math.min(1, (interval - daysLeft) / interval));
+  const len = C * elapsed;
+  const label = due ? "0d" : daysLeft + "d";
+  return `<div class="mini-ring ${due ? "due" : ""}">
+    <svg width="36" height="36" viewBox="0 0 30 30">
+      <circle class="mr-track" cx="15" cy="15" r="12" fill="none" stroke-width="3"/>
+      <circle class="mr-bar" cx="15" cy="15" r="12" fill="none" stroke-width="3" stroke-dasharray="${len.toFixed(1)} ${(C - len).toFixed(1)}"/>
+    </svg>
+    <div class="mr-label">${label}</div>
+  </div>`;
+}
+function todayRingSVG(cared, total) {
+  const C = 263.894; // 2π·42
+  const frac = total ? cared / total : 0;
+  const len = Math.max(0.04 * C, C * frac);
+  return `<svg width="76" height="76" viewBox="0 0 100 100">
+    <circle class="tr-track" cx="50" cy="50" r="42" fill="none" stroke-width="8"/>
+    <circle class="tr-bar" cx="50" cy="50" r="42" fill="none" stroke-width="8" stroke-dasharray="${len.toFixed(1)} ${(C - len).toFixed(1)}"/>
+  </svg>`;
+}
+function quickWater(plantId) {
+  const p = store.plants.find(x => x.id === plantId);
+  if (!p) return;
+  addJournal(plantId, { type: "water" });
+  toast(`Podlano: ${p.name} ✓`);
+  renderPlants();
+}
+function quickFert(plantId) {
+  const p = store.plants.find(x => x.id === plantId);
+  if (!p) return;
+  addJournal(plantId, { type: "fert" });
+  toast(`Nawieziono: ${p.name} ✓`);
+  renderPlants();
+}
+function pl(n, one, few, many) { return n === 1 ? one : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 10 || n % 100 >= 20)) ? few : many; }
+
+function renderTodayCard(plants) {
+  const box = $("#today-card");
+  if (!box) return;
+  if (!plants.length) { box.innerHTML = ""; return; }
+  const waterDue = plants.filter(p => daysUntilWater(p) <= 0).sort((a, b) => daysUntilWater(a) - daysUntilWater(b));
+  const fertDue = plants.filter(p => { const f = daysUntilFert(p); return f !== null && f <= 0; });
+  const pendingIds = new Set([...waterDue, ...fertDue].map(p => p.id));
+  const total = plants.length;
+  const cared = total - pendingIds.size;
+
+  if (!pendingIds.size) {
+    box.innerHTML = `<div class="today-card"><div class="today-allok">
+      <div class="ok-badge">✓</div>
+      <div><div class="today-title">Wszystko zadbane</div>
+      <div class="today-desc">Żadna roślina nie czeka dziś na podlanie ani nawożenie.</div></div>
+    </div></div>`;
+    return;
+  }
+
+  const taskRows = [
+    ...waterDue.map(p => ({ p, kind: "water" })),
+    ...fertDue.filter(p => daysUntilWater(p) > 0).map(p => ({ p, kind: "fert" })),
+  ].slice(0, 6);
+
+  const n = pendingIds.size;
+  box.innerHTML = `<div class="today-card">
+    <div class="today-head">
+      <div class="today-ring">${todayRingSVG(cared, total)}
+        <div class="tr-center"><div class="tr-num">${cared}/${total}</div><div class="tr-k">zadbane</div></div>
+      </div>
+      <div style="flex:1">
+        <div class="today-title">${n} ${pl(n, "zadanie", "zadania", "zadań")} na dziś</div>
+        <div class="today-desc">Odhacz jednym dotknięciem — zapiszę w dzienniku.</div>
+      </div>
+    </div>
+    <div class="today-tasks">
+      ${taskRows.map(({ p, kind }) => `
+        <div class="today-task">
+          ${p.photo ? `<img src="${p.photo}" alt="" loading="lazy">` : `<div class="tt-ph"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>`}
+          <div class="tt-info">
+            <div class="tt-name">${esc(p.name)}</div>
+            <div class="tt-sub">${kind === "water" ? "Podlewanie · co " + currentInterval(p) + " dni" : "Nawożenie · sezon wzrostu"}</div>
+          </div>
+          <button class="tt-btn ${kind === "water" ? "tt-water" : "tt-fert"}" data-${kind}="${p.id}">${kind === "water" ? "Podlej" : "Nawieź"}</button>
+        </div>`).join("")}
+    </div>
+  </div>`;
+  box.querySelectorAll("[data-water]").forEach(b => b.onclick = () => quickWater(b.dataset.water));
+  box.querySelectorAll("[data-fert]").forEach(b => b.onclick = () => quickFert(b.dataset.fert));
+}
+
 function renderPlants() {
   renderPlaceControls();
   const plants = filteredPlants();
@@ -784,19 +960,17 @@ function renderPlants() {
   list.innerHTML = "";
   empty.classList.toggle("hidden", allPlants.length > 0);
 
-  const due = plants.filter(p => daysUntilWater(p) <= 0);
-  const fertDue = plants.filter(p => { const f = daysUntilFert(p); return f !== null && f <= 0; });
-
-  // hero
-  const hd = $("#hero-date"), hl = $("#hero-line");
-  if (hd) hd.textContent = new Date().toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" }) + " · " + (isSummer() ? "sezon wzrostu" : "spoczynek zimowy");
+  // hero: data + awatar + powitanie
+  const hd = $("#hero-date"), hl = $("#hero-line"), av = $("#hero-avatar");
+  if (hd) hd.textContent = new Date().toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" });
+  if (av) av.textContent = userInitials();
   if (hl) {
     if (!allPlants.length) hl.textContent = "Zacznij od pierwszego skanu";
-    else if (due.length) hl.innerHTML = `<span class="hero-num">${due.length}</span> ${due.length === 1 ? "roślina czeka" : due.length < 5 ? "rośliny czekają" : "roślin czeka"} na wodę`;
-    else hl.innerHTML = `Wszystko podlane <span class="hero-ok">✓</span>`;
+    else hl.textContent = greeting();
   }
 
-  banner.classList.add("hidden"); // baner zastąpiony przez Asystenta
+  renderTodayCard(plants);
+  banner.classList.add("hidden"); // baner zastąpiony przez kartę „Dzisiaj" + Asystenta
 
   // Asystent — wnioski z dziennika
   const aBox = $("#assistant-box");
@@ -807,31 +981,24 @@ function renderPlants() {
       aBox.classList.remove("hidden");
       aBox.innerHTML = `<div class="as-head"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z" fill="none" stroke="currentColor" stroke-width="1.7"/></svg> Asystent</div>`
         + ins.map(i => `<button class="as-item" data-plant="${i.plant.id}">
-            <span class="as-ico">${i.ico}</span>
+            <span class="as-ico">${icon(i.ico)}</span>
             <span class="as-txt"><strong>${esc(i.plant.name)}:</strong> ${esc(i.text)}</span>
           </button>`).join("");
       aBox.querySelectorAll("[data-plant]").forEach(b => b.onclick = () => openDetail(b.dataset.plant));
     }
   }
 
-  plants.slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b)).forEach((p, i) => {
+  plants.slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b)).forEach((p) => {
     const d = daysUntilWater(p);
-    const f = daysUntilFert(p);
-    const diag = lastDiagnosis(p);
-    const recentDiag = diag && (Date.now() - diag.t) < 21 * DAY;
     const el = document.createElement("div");
-    el.className = "tile" + (d <= 0 ? " tile-due" : "");
-    el.style.animationDelay = (i * 45) + "ms";
+    el.className = "plant-row";
     el.innerHTML = `
-      ${p.photo ? `<img class="tile-photo" src="${p.photo}" alt="" loading="lazy">` : `<div class="tile-photo tile-ph"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>`}
-      <div class="tile-ring">${ringSVG(p, 44)}</div>
-      ${recentDiag ? `<div class="tile-flag" title="${esc(diag.name)}">🩺</div>` : ""}
-      ${f !== null && f <= 0 ? `<div class="tile-flag tile-flag2" title="czas nawieźć">🌿</div>` : ""}
-      <div class="tile-grad"></div>
-      <div class="tile-meta">
-        <div class="tile-name">${esc(p.name)}</div>
-        <div class="tile-due-txt ${d <= 0 ? "overdue" : ""}">${esc(roomName(p.roomId))} · ${d <= 0 ? "podlej dziś" : "woda za " + d + " dn."}</div>
-      </div>`;
+      ${p.photo ? `<img class="pr-photo" src="${p.photo}" alt="" loading="lazy">` : `<div class="pr-photo"><svg viewBox="0 0 24 24" width="26" height="26"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>`}
+      <div class="pr-info">
+        <div class="pr-name">${esc(p.name)}</div>
+        <div class="pr-sub ${d <= 0 ? "due" : ""}">${esc(roomName(p.roomId))} · ${d <= 0 ? "podlej dziś" : "podlej za " + d + " " + pl(d, "dzień", "dni", "dni")}</div>
+      </div>
+      ${miniRingSVG(p)}`;
     el.addEventListener("click", () => openDetail(p.id));
     list.appendChild(el);
   });
@@ -840,12 +1007,12 @@ function renderPlants() {
 // ============ SZCZEGÓŁY ROŚLINY: dziennik + ewolucja ============
 function journalAuthor(e) { return e.displayName || e.userEmail || (e.userId ? "użytkownik" : "local"); }
 const JOURNAL_META = {
-  added: { ico: "🌱", label: e => `Dodał/a ${esc(journalAuthor(e))} do kolekcji` },
-  water: { ico: "💧", label: e => `Podlał/a ${esc(journalAuthor(e))}` },
-  fert: { ico: "🌿", label: e => `Nawiózł/a ${esc(journalAuthor(e))}` },
-  diagnosis: { ico: "🩺", label: e => `Diagnoza (${esc(journalAuthor(e))}): ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
-  photo: { ico: "📷", label: e => `Zdjęcie — ${esc(journalAuthor(e))}` },
-  note: { ico: "📝", label: e => `${esc(journalAuthor(e))}: ${esc(e.title || e.text || "Notatka")}` },
+  added: { ico: "sprout", label: e => `Dodał/a ${esc(journalAuthor(e))} do kolekcji` },
+  water: { ico: "drop", label: e => `Podlał/a ${esc(journalAuthor(e))}` },
+  fert: { ico: "leaf", label: e => `Nawiózł/a ${esc(journalAuthor(e))}` },
+  diagnosis: { ico: "cross", label: e => `Diagnoza (${esc(journalAuthor(e))}): ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
+  photo: { ico: "camera", label: e => `Zdjęcie — ${esc(journalAuthor(e))}` },
+  note: { ico: "note", label: e => `${esc(journalAuthor(e))}: ${esc(e.title || e.text || "Notatka")}` },
 };
 
 const NOTE_COLLAPSE_LIMIT = 180;
@@ -867,7 +1034,7 @@ function renderTimelineEntry(e, i) {
       <div class="tl-note-author">${esc(journalAuthor(e))}</div>
     </div>` : `<div class="tl-label">${m.label(e)}</div>`;
   return `<div class="tl-entry">
-    <div class="tl-ico">${m.ico}</div>
+    <div class="tl-ico">${icon(m.ico, 16)}</div>
     <div class="tl-body">
       ${label}
       <div class="tl-date">${fmtWhen(e.t)}${e.updatedAt && e.updatedAt !== e.t ? " · edytowano " + fmtWhen(e.updatedAt) : ""}</div>
@@ -943,17 +1110,17 @@ function openDetail(id, options = {}) {
   const evoPhotos = [];
   if (p.photo) evoPhotos.push({ t: p.added, photo: p.photo, tag: "start" });
   (p.journal || []).filter(e => entryPhotos(e).length).sort((a, b) => a.t - b.t).forEach(e => {
-    entryPhotos(e).forEach(photo => evoPhotos.push({ t: e.t, photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
+    entryPhotos(e).forEach(photo => evoPhotos.push({ t: e.t, photo, tag: e.type === "diagnosis" ? "diagnoza" : "" }));
   });
 
   $("#plant-detail-content").innerHTML = `
     <div class="detail-hero">
-      ${p.photo ? `<img class="detail-photo" src="${p.photo}" alt="">` : `<div class="detail-photo">🪴</div>`}
+      ${p.photo ? `<img class="detail-photo" src="${p.photo}" alt="">` : `<div class="detail-photo">${icon("leaf", 34)}</div>`}
       <div>
         <div class="detail-name">${esc(p.name)}</div>
         <div class="detail-latin">${esc(p.latin || "")}</div>
-        <div class="detail-latin">📍 ${esc(homeLabel(store.homes.find(h => h.id === p.homeId) || currentHome()))} · ${esc(roomName(p.roomId))}</div>
-        ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px">⚠️ Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px">✓ Bezpieczna dla zwierząt</div>` : ""}
+        <div class="detail-latin detail-place">${icon("pin", 15)} ${esc(homeLabel(store.homes.find(h => h.id === p.homeId) || currentHome()))} · ${esc(roomName(p.roomId))}</div>
+        ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px" class="tox-line">${icon("warn",15)} Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px" class="tox-line">${icon("cross",15)} Bezpieczna dla zwierząt</div>` : ""}
       </div>
     </div>
 
@@ -973,34 +1140,34 @@ function openDetail(id, options = {}) {
       <div style="flex:1">
         <div style="font-weight:800">${d <= 0 ? "Czas podlać!" : "Podlewanie za " + d + " " + (d === 1 ? "dzień" : "dni")}</div>
         <div class="muted" style="margin:4px 0 10px">co ${interval} dni (${isSummer() ? "sezon letni" : "sezon zimowy"})</div>
-        <button class="btn btn-water" id="water-now">💧 Podlałem/am teraz</button>
+        <button class="btn btn-water" id="water-now">${icon("drop")} Podlałem/am teraz</button>
       </div>
     </div>
 
     <div class="fert-block">
-      <div class="fert-ico">🌿</div>
+      <div class="fert-ico">${icon("leaf", 20)}</div>
       <div style="flex:1">
         <div style="font-weight:700;font-size:.92rem">${fert === null ? "Nawożenie: przerwa zimowa" : fert <= 0 ? "Czas nawieźć!" : "Nawożenie za " + fert + " " + (fert === 1 ? "dzień" : "dni")}</div>
         <div class="muted" style="font-size:.78rem">${fert === null ? "Wznowisz w kwietniu — rośliny zimą odpoczywają." : "co " + FERT_INTERVAL + " dni w sezonie wzrostu"}</div>
       </div>
-      ${fert !== null ? `<button class="btn btn-ghost" id="fert-now" style="padding:9px 14px">🌿 Nawiozłem/am</button>` : ""}
+      ${fert !== null ? `<button class="btn btn-ghost" id="fert-now" style="padding:9px 14px">${icon("leaf")} Nawiozłem/am</button>` : ""}
     </div>
 
     ${(() => { const ins = plantInsights(p); return ins.length ? `
     <div class="card as-card">
       <div class="sec-k">Asystent</div>
-      ${ins.map(i => `<div class="as-line"><span class="as-ico">${i.ico}</span><span>${esc(i.text)}</span></div>`).join("")}
+      ${ins.map(i => `<div class="as-line"><span class="as-ico">${icon(i.ico, 16)}</span><span>${esc(i.text)}</span></div>`).join("")}
     </div>` : ""; })()}
 
     <div class="action-row">
-      <label class="btn btn-ghost" for="journal-photo-file">📷 Zdjęcie do dziennika<input type="file" id="journal-photo-file" accept="image/*" capture="environment" hidden></label>
-      <button class="btn btn-ghost" id="add-note">📝 Notatka</button>
-      <button class="btn btn-ghost" id="diagnose-this" data-goto="doctor">🩺 Diagnozuj</button>
+      <label class="btn btn-ghost" for="journal-photo-file">${icon("camera")} Zdjęcie do dziennika<input type="file" id="journal-photo-file" accept="image/*" capture="environment" hidden></label>
+      <button class="btn btn-ghost" id="add-note">${icon("note")} Notatka</button>
+      <button class="btn btn-ghost" id="diagnose-this" data-goto="doctor">${icon("cross")} Diagnozuj</button>
     </div>
 
     ${evoPhotos.length > 1 ? `
     <div class="card">
-      <div class="sec-k">🌿 Ewolucja (${evoPhotos.length} zdjęć)</div>
+      <div class="sec-k">${icon("leaf",15)} Ewolucja (${evoPhotos.length} zdjęć)</div>
       <div class="evo-strip">${evoPhotos.map(e => `
         <figure class="evo-item"><img src="${e.photo}" alt="" loading="lazy"><figcaption>${fmtDate(e.t)}${e.tag === "start" ? " · start" : e.tag ? " " + e.tag : ""}</figcaption></figure>`).join("")}
       </div>
@@ -1012,18 +1179,18 @@ function openDetail(id, options = {}) {
         <button id="int-minus" aria-label="Rzadziej">−</button>
         <span class="interval-val">co ${interval} dni</span>
         <button id="int-plus" aria-label="Częściej">+</button>
-        ${p.customInterval ? `<button class="btn btn-ghost" id="int-reset" style="padding:8px 12px;font-size:.8rem">↺ auto</button>` : ""}
+        ${p.customInterval ? `<button class="btn btn-ghost" id="int-reset" style="padding:8px 12px;font-size:.8rem">${icon("sync",15)} auto</button>` : ""}
       </div>
     </div>
 
     <div class="care-grid">
-      <div class="care-cell"><div class="k">☀️ Światło</div><div class="v">${esc(care.light)}</div></div>
-      <div class="care-cell"><div class="k">💨 Wilgotność</div><div class="v">${esc(care.humidity)}</div></div>
+      <div class="care-cell"><div class="k">${icon("sun",14)} Światło</div><div class="v">${esc(care.light)}</div></div>
+      <div class="care-cell"><div class="k">${icon("wind",14)} Wilgotność</div><div class="v">${esc(care.humidity)}</div></div>
     </div>
-    <div class="card"><div class="sec-k">💡 Wskazówki</div><div style="font-size:.9rem;line-height:1.55">${esc(care.tips)}</div></div>
+    <div class="card"><div class="sec-k">${icon("bulb",15)} Wskazówki</div><div style="font-size:.9rem;line-height:1.55">${esc(care.tips)}</div></div>
 
     <div class="card">
-      <div class="sec-k">📖 Dziennik (${journal.length})</div>
+      <div class="sec-k">${icon("book",15)} Dziennik (${journal.length})</div>
       ${journal.length ? `<div class="timeline">${journal.map((e, i) => renderTimelineEntry(e, i)).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
     </div>
 
@@ -1046,15 +1213,15 @@ function openDetail(id, options = {}) {
     if (movePlantToRoom(id, room.id)) toast("Przeniesiono roślinę");
     openDetail(id);
   };
-  $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
+  $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("Zapisano podlewanie"); openDetail(id); };
   const fertBtn = $("#fert-now");
-  if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
+  if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("Zapisano nawożenie"); openDetail(id); };
   $("#add-note").onclick = () => openNoteModal(id);
   $("#journal-photo-file").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const photo = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
     addJournal(id, { type: "photo", title: "Zdjęcie", photos: [photo], photo });
-    toast("📷 Dodano do dziennika"); openDetail(id);
+    toast("Dodano do dziennika"); openDetail(id);
   });
   $("#diagnose-this").addEventListener("click", () => { doctorPlantId = id; }, { capture: true });
   $("#int-minus").onclick = () => { mutatePlant(id, p => p.customInterval = Math.max(1, currentInterval(p) - 1)); openDetail(id); };
@@ -1179,7 +1346,7 @@ function renderScanResults(results) {
         <span class="score-pill ${score >= 50 ? "score-high" : "score-mid"}">${score}%</span>
       </div>
       <div class="result-body">
-        ${known ? `💧 Podlewanie co ~${isSummer() ? care.waterSummer : care.waterWinter} dni · ${care.toxic ? "⚠️ toksyczna" : care.toxic === false ? "✓ bezpieczna dla zwierząt" : ""}` : "Brak w bazie pielęgnacji — dodam z ogólnym planem, dostroisz ręcznie."}
+        ${known ? `${icon("drop",14)} Podlewanie co ~${isSummer() ? care.waterSummer : care.waterWinter} dni · ${care.toxic ? "toksyczna" : care.toxic === false ? "bezpieczna dla zwierząt" : ""}` : "Brak w bazie pielęgnacji — dodam z ogólnym planem, dostroisz ręcznie."}
       </div>
       <div class="result-actions"><button class="btn btn-primary">＋ Dodaj do kolekcji</button></div>`;
     card.querySelector(".btn-primary").onclick = () => addPlant(latin, care.pl || common || latin);
@@ -1195,9 +1362,9 @@ function addPlant(latin, displayName) {
   const roomId = store.currentRoomId || place.roomId;
   plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [normalizeJournalEntry({ t: Date.now(), type: "added", title: "Dodano do kolekcji", ...currentJournalAuthor() })] });
   store.plants = plants;
-  toast("🪴 Dodano: " + name);
+  toast("Dodano: " + name);
   scanBlob = null; scanThumb = null;
-  $("#scan-preview").innerHTML = `<span class="photo-cta">📷<br>Dotknij, by zrobić zdjęcie</span>`;
+  $("#scan-preview").innerHTML = `<span class="photo-cta">${icon("camera",30)}<br>Dotknij, by zrobić zdjęcie</span>`;
   $("#scan-results").innerHTML = ""; $("#scan-go").disabled = true;
   goto("plants");
 }
@@ -1267,7 +1434,7 @@ function saveDiagnosis(name, score, src) {
   const ok = addJournal(doctorPlantId, { type: "diagnosis", title: `Diagnoza: ${name}`, text: "", name, score, src, photos: src === "ai" && doctorThumb ? [doctorThumb] : [], photo: src === "ai" ? doctorThumb : undefined });
   if (ok) {
     const p = store.plants.find(x => x.id === doctorPlantId);
-    toast(`🩺 Zapisano w dzienniku: ${p.name}`);
+    toast(`Zapisano w dzienniku: ${p.name}`);
   }
   return ok;
 }
@@ -1291,7 +1458,7 @@ function renderDoctorResults(results) {
       <div class="result-body">
         ${known ? `<strong>Jak rozpoznać:</strong> ${esc(known.what)}<br><br><strong>Co robić:</strong> ${esc(known.action)}` : `Kod EPPO: ${esc(code)}. Brak szczegółów w lokalnej bazie.`}
       </div>
-      <div class="result-actions"><button class="btn btn-primary">📖 Zapisz do dziennika</button></div>`;
+      <div class="result-actions"><button class="btn btn-primary">${icon("book")} Zapisz do dziennika</button></div>`;
     card.querySelector(".btn-primary").onclick = (ev) => { if (saveDiagnosis(displayName, score, "ai")) ev.target.disabled = true, ev.target.textContent = "✓ Zapisano"; };
     box.appendChild(card);
   });
@@ -1306,7 +1473,7 @@ function renderSymptoms() {
       <div class="symptom-body">
         <strong>Prawdopodobna przyczyna:</strong> ${esc(s.causes)}<br><br>
         <strong>Co robić:</strong> ${esc(s.action)}
-        <div class="result-actions"><button class="btn btn-ghost" data-sym="${i}">📖 Zapisz do dziennika</button></div>
+        <div class="result-actions"><button class="btn btn-ghost" data-sym="${i}">${icon("book")} Zapisz do dziennika</button></div>
       </div>
     </details>`).join("");
   $$("#symptoms-list [data-sym]").forEach(b => b.onclick = () => {
@@ -1400,11 +1567,14 @@ $("#assistant-save")?.addEventListener("click", async () => {
   const cloud = cloudSettings();
   const status = $("#assistant-config-status");
   if (!cloud?.saveAssistantConfig) { status.textContent = "Chmura nie jest jeszcze gotowa — zaloguj się."; return; }
+  const provider = $("#assistant-provider").value;
   const cfg = {
-    provider: $("#assistant-provider").value,
+    provider,
     apiKey: $("#assistant-key").value.trim(),
     model: $("#assistant-model").value.trim(),
-    baseUrl: $("#assistant-baseurl").value.trim(),
+    // Only custom providers carry a base URL; presets resolve it from ASSISTANT_PROVIDERS,
+    // so we never persist (and later re-append to) a full endpoint for openrouter/groq.
+    baseUrl: provider === "custom" ? $("#assistant-baseurl").value.trim() : "",
   };
   $("#assistant-save").disabled = true;
   status.textContent = "Zapisuję w chmurze…";
@@ -1434,7 +1604,7 @@ function checkDueAndNotify() {
   const due = store.plants.filter(p => daysUntilWater(p) <= 0);
   if (due.length) {
     try {
-      navigator.serviceWorker?.ready.then(reg => reg.showNotification("PlantApp 💧", {
+      navigator.serviceWorker?.ready.then(reg => reg.showNotification("PlantApp", {
         body: due.length === 1 ? `${due[0].name} czeka na podlanie!` : `${due.length} rośliny czekają na podlanie: ${due.map(p => p.name).join(", ")}`,
         icon: "icons/icon-192.png", badge: "icons/icon-192.png", tag: "watering"
       }));
@@ -1473,10 +1643,10 @@ $("#note-form")?.addEventListener("submit", (e) => {
         entry.updatedAt = Date.now();
       }
     });
-    toast("📝 Zaktualizowano notatkę");
+    toast("Zaktualizowano notatkę");
   } else {
     addJournal(noteContext.plantId, { type: "note", title, text });
-    toast("📝 Dodano notatkę");
+    toast("Dodano notatkę");
   }
   const plantId = noteContext.plantId;
   closeNoteModal();
@@ -1490,6 +1660,7 @@ function init() {
     if (sessionStorage.getItem("pa_intro")) intro.classList.add("skip");
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
+  document.body.classList.toggle("on-plants", currentView === "plants");
   refreshApiKeyField();
   refreshAssistantConfigCard();
   $("#home-select")?.addEventListener("change", (e) => {

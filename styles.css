@@ -1,29 +1,74 @@
-/* PlantApp — „nocna szklarnia": ciemna zieleń, chlorofilowy akcent, pierścień podlewania jako sygnatura. */
+/* PlantApp — „Nocna oranżeria": tokeny motywu (ciemny domyślny + jasny), pierścień podlewania jako sygnatura. */
 
 :root {
-  --bg: #0F1F15;          /* głęboka zieleń nocnej szklarni */
-  --bg-soft: #16291D;
-  --card: #1C3324;
-  --card-edge: #2A4733;
-  --ink: #EAF3EB;
-  --ink-dim: #9FB8A6;
-  --leaf: #7BC96A;        /* chlorofil — akcent główny */
-  --water: #5AB6D9;       /* woda */
-  --alert: #E2A55B;       /* terakota doniczki — ostrzeżenia */
+  /* === MOTYW CIEMNY (domyślny) — „Nocna oranżeria" === */
+  --bg: #0C1410;
+  --text: #E9F0E6;
+  --muted: #8FA391;
+  --muted-2: #6E7F70;
+  --card: rgba(233, 240, 230, 0.05);
+  --card-border: rgba(233, 240, 230, 0.08);
+  --accent: #9FE0B5;
+  --accent-ink: #0C1410;
+  --accent-soft: rgba(159, 224, 181, 0.12);
+  --accent-border: rgba(159, 224, 181, 0.2);
+  --warn: #F0B86E;
+  --warn-soft: rgba(240, 184, 110, 0.15);
+  --chip-on: #E9F0E6;
+  --chip-on-ink: #0C1410;
+  --bar: rgba(15, 24, 18, 0.92);
+  --track: rgba(233, 240, 230, 0.1);
+  --input: #101913;
+  --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   --danger: #E2705B;
-  --ring-track: #2A4733;
+
+  /* Aliasy starych nazw → nowe tokeny (cała istniejąca stylistyka dziedziczy motyw). */
+  --bg-soft: var(--input);
+  --card-edge: var(--card-border);
+  --ink: var(--text);
+  --ink-dim: var(--muted);
+  --leaf: var(--accent);
+  --leaf-ink: var(--accent-ink);
+  --water: var(--accent);
+  --alert: var(--warn);
+  --ring-track: var(--track);
+
   --radius: 18px;
-  --tabbar-h: 64px;
+  --tabbar-h: 80px;
+}
+
+html[data-theme="light"] {
+  /* === MOTYW JASNY — „Jasna szklarnia" === */
+  --bg: #F4F2EA;
+  --text: #1F2B22;
+  --muted: #7A8273;
+  --muted-2: #8A9180;
+  --card: #FFFFFF;
+  --card-border: #E9E6D9;
+  --accent: #2E5E3A;
+  --accent-ink: #F7F5EE;
+  --accent-soft: rgba(46, 94, 58, 0.09);
+  --accent-border: rgba(46, 94, 58, 0.22);
+  --warn: #C8852C;
+  --warn-soft: rgba(200, 133, 44, 0.14);
+  --chip-on: #1F2B22;
+  --chip-on-ink: #F7F5EE;
+  --bar: rgba(255, 255, 255, 0.95);
+  --track: #E5E2D4;
+  --input: #FBFAF4;
+  --shadow: 0 8px 24px rgba(31, 43, 34, 0.14);
+  --danger: #C0503C;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html { font-size: 16px; }
 body {
-  font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  font-family: "Space Grotesk", -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
   background: var(--bg);
-  color: var(--ink);
+  color: var(--text);
   min-height: 100dvh;
-  padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
+  padding-bottom: calc(var(--tabbar-h) + 60px + env(safe-area-inset-bottom));
+  transition: background .25s ease, color .25s ease;
 }
 
 a { color: var(--leaf); }
@@ -111,8 +156,8 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; ov
 .ring-label small { display: block; font-size: .55rem; color: var(--ink-dim); font-weight: 600; }
 
 .due-banner {
-  background: linear-gradient(135deg, #2A4733, #1C3324);
-  border: 1px solid var(--leaf); border-radius: var(--radius);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border); border-radius: var(--radius);
   padding: 12px 14px; margin: 4px 0 12px; font-size: .92rem;
 }
 
@@ -128,10 +173,13 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; ov
   cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
 }
 .btn:focus-visible { outline: 2px solid var(--leaf); outline-offset: 2px; }
-.btn-primary { background: var(--leaf); color: #0E1F12; }
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
 .btn-primary:disabled { background: var(--card-edge); color: var(--ink-dim); cursor: not-allowed; }
 .btn-ghost { background: var(--card); color: var(--ink); border: 1px solid var(--card-edge); }
-.btn-water { background: var(--water); color: #06222E; }
+.btn-water { background: var(--accent); color: var(--accent-ink); }
+.btn:hover { filter: brightness(1.08); }
+.btn:active { transform: scale(.97); }
+.btn { transition: filter .15s ease, background .15s ease, transform .12s ease; }
 .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
 .btn-block { width: 100%; margin-top: 14px; }
 
@@ -140,10 +188,13 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; ov
   border: 1px solid var(--card-edge); background: var(--card); color: var(--ink-dim);
   border-radius: 999px; padding: 7px 14px; font-size: .85rem; cursor: pointer; font-family: inherit;
 }
-.chip.active { background: var(--leaf); color: #0E1F12; border-color: var(--leaf); font-weight: 700; }
+.chip { transition: filter .15s ease, background .15s ease, transform .12s ease; }
+.chip:hover { filter: brightness(1.08); }
+.chip:active { transform: scale(.97); }
+.chip.active { background: var(--chip-on); color: var(--chip-on-ink); border-color: var(--chip-on); font-weight: 700; }
 
 .place-filter {
-  background: rgba(28, 51, 36, .72);
+  background: var(--card);
   border: 1px solid var(--card-edge);
   border-radius: 18px;
   padding: 12px;
@@ -223,7 +274,7 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; ov
 /* ---------- segments / doctor ---------- */
 .seg { display: flex; background: var(--card); border: 1px solid var(--card-edge); border-radius: 999px; padding: 4px; margin-bottom: 14px; }
 .seg-btn { flex: 1; border: 0; background: transparent; color: var(--ink-dim); padding: 9px; border-radius: 999px; font-family: inherit; font-size: .88rem; font-weight: 700; cursor: pointer; }
-.seg-btn.active { background: var(--leaf); color: #0E1F12; }
+.seg-btn.active { background: var(--chip-on); color: var(--chip-on-ink); }
 
 .symptoms-list { display: flex; flex-direction: column; gap: 8px; }
 .symptom { background: var(--card); border: 1px solid var(--card-edge); border-radius: 14px; overflow: hidden; }
@@ -259,7 +310,7 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; ov
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
   height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
-  display: flex; background: rgba(15,31,21,.92); backdrop-filter: blur(12px);
+  display: flex; background: var(--bar); backdrop-filter: blur(12px);
   border-top: 1px solid var(--card-edge);
 }
 .tab { flex: 1; border: 0; background: none; color: var(--ink-dim); font-family: inherit; font-size: .7rem; font-weight: 700; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; cursor: pointer; }
@@ -268,12 +319,19 @@ main { padding: 0 16px; max-width: 560px; margin: 0 auto; position: relative; ov
 
 /* ---------- toast ---------- */
 .toast {
-  position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(var(--tabbar-h) + 18px + env(safe-area-inset-bottom));
-  background: var(--leaf); color: #0E1F12; font-weight: 700; font-size: .9rem;
-  padding: 11px 18px; border-radius: 999px; z-index: 50; max-width: 90vw; text-align: center;
+  position: fixed; left: 50%;
+  bottom: calc(var(--tabbar-h) + 28px + env(safe-area-inset-bottom));
+  background: var(--chip-on); color: var(--chip-on-ink); font-weight: 700; font-size: .9rem;
+  padding: 12px 20px; border-radius: 999px; z-index: 50; max-width: 90vw; text-align: center;
+  box-shadow: var(--shadow);
+  animation: toastIn .25s cubic-bezier(.2,.8,.3,1);
 }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 14px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.toast { transform: translateX(-50%); }
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
 .hidden { display: none !important; }
+/* atrybut hidden musi wygrać z .row { display:flex } i podobnymi */
+[hidden] { display: none !important; }
 
 /* ---------- v1.1: dziennik, ewolucja, picker ---------- */
 .picker-block { margin-bottom: 14px; }
@@ -388,7 +446,7 @@ code { background: var(--bg-soft); border: 1px solid var(--card-edge); border-ra
 .auth-screen {
   position: fixed; inset: 0; z-index: 90; overflow-y: auto;
   background:
-    radial-gradient(110% 70% at 50% -10%, #1E3A28 0%, transparent 60%),
+    radial-gradient(110% 70% at 50% -10%, var(--accent-soft) 0%, transparent 60%),
     var(--bg);
   display: grid; place-items: center; padding: 32px 24px;
 }
@@ -411,8 +469,8 @@ body.auth-open { overflow: hidden; }
 .auth-skip:hover { color: var(--ink); }
 .auth-note { font-size: .74rem; color: var(--ink-dim); text-align: center; line-height: 1.5; opacity: .8; }
 
-/* primary z gradientem — jeden mocny akcent */
-.btn-primary { background: linear-gradient(135deg, #8FD97E, #5FB868); }
+/* primary — płaski akcent z tokenu (oba motywy) */
+.btn-primary { background: var(--accent); color: var(--accent-ink); }
 
 /* ---------- Asystent ---------- */
 .assistant { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px; }
@@ -437,7 +495,7 @@ body.auth-open { overflow: hidden; }
 }
 .assistant-empty { color: var(--ink-dim); font-size: .86rem; line-height: 1.5; padding: 8px; text-align: center; }
 .assistant-msg { max-width: 88%; border: 1px solid var(--card-edge); border-radius: 14px; padding: 9px 11px; }
-.assistant-msg-user { align-self: flex-end; background: rgba(123, 201, 106, .14); border-color: rgba(123, 201, 106, .42); }
+.assistant-msg-user { align-self: flex-end; background: var(--accent-soft); border-color: var(--accent-border); }
 .assistant-msg-assistant { align-self: flex-start; background: var(--card); }
 .assistant-msg-role { font-size: .68rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 4px; }
 .assistant-msg-content { white-space: pre-wrap; font-size: .88rem; line-height: 1.5; }
@@ -475,8 +533,8 @@ body.auth-open { overflow: hidden; }
 }
 .modal-close {
   border: 0;
-  background: rgba(15, 31, 21, .82);
-  color: var(--ink);
+  background: var(--bar);
+  color: var(--text);
   width: 40px;
   height: 40px;
   border-radius: 999px;
@@ -544,3 +602,121 @@ body.auth-open { overflow: hidden; }
 }
 .tl-tools { display: flex; gap: 12px; flex-wrap: wrap; }
 .tl-note-author { color: var(--ink-dim); font-size: .76rem; margin-top: 2px; }
+
+/* ========================================================================
+   „Nocna oranżeria" — redesign chrome: sidebar, FAB, karta „Dzisiaj",
+   wiersze roślin, motyw, stopka wersji
+   ======================================================================== */
+
+/* marka chowana na mobile — zostaje w sidebarze (desktop) i na ekranie logowania */
+.topbar { display: none; }
+
+.view-title { font-size: 1.62rem; font-weight: 700; letter-spacing: -.01em; margin: 4px 0 4px; }
+.view-sub { color: var(--muted); font-size: .86rem; }
+
+/* hero: data (uppercase) + awatar, powitanie */
+.hero { padding: 4px 2px 14px; }
+.hero-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hero-date { font-size: .7rem; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; color: var(--muted-2); margin: 0; }
+.hero-avatar { width: 38px; height: 38px; border-radius: 50%; flex: none; display: grid; place-items: center; font-size: .8rem; font-weight: 700; background: var(--accent-soft); border: 1px solid var(--accent-border); color: var(--accent); }
+.hero-line { font-size: 1.85rem; font-weight: 700; line-height: 1.12; letter-spacing: -.01em; margin-top: 12px; }
+.hero-num { color: var(--accent); font-size: 1.95rem; }
+.hero-ok { color: var(--accent); }
+
+/* karta „Dzisiaj" — zbiorczy pierścień + szybkie akcje */
+.today-card { margin: 16px 0 4px; border-radius: 20px; padding: 16px; background: var(--accent-soft); border: 1px solid var(--accent-border); }
+.today-head { display: flex; align-items: center; gap: 16px; }
+.today-ring { position: relative; width: 76px; height: 76px; flex: none; }
+.today-ring svg { transform: rotate(-90deg); }
+.today-ring .tr-track { stroke: var(--track); }
+.today-ring .tr-bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dasharray .5s ease; }
+.today-ring .tr-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.today-ring .tr-num { font-size: .95rem; font-weight: 700; line-height: 1; color: var(--accent); }
+.today-ring .tr-k { font-size: .53rem; color: var(--muted); margin-top: 2px; }
+.today-title { font-size: .97rem; font-weight: 700; }
+.today-desc { font-size: .78rem; color: var(--muted); margin-top: 2px; }
+.today-tasks { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.today-task { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--card-border); border-radius: 14px; padding: 8px 10px; }
+.today-task img, .today-task .tt-ph { width: 44px; height: 44px; border-radius: 11px; object-fit: cover; flex: none; background: var(--input); display: grid; place-items: center; color: var(--muted-2); }
+.today-task .tt-info { flex: 1; min-width: 0; }
+.today-task .tt-name { font-size: .87rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.today-task .tt-sub { font-size: .75rem; color: var(--muted); }
+.tt-btn { height: 38px; padding: 0 16px; border: 0; border-radius: 999px; cursor: pointer; font-family: inherit; font-size: .8rem; font-weight: 700; transition: filter .15s ease, transform .12s ease; }
+.tt-btn:hover { filter: brightness(1.08); }
+.tt-btn:active { transform: scale(.96); }
+.tt-water { background: var(--accent); color: var(--accent-ink); }
+.tt-fert { background: var(--warn-soft); color: var(--warn); }
+.today-allok { display: flex; align-items: center; gap: 12px; }
+.today-allok .ok-badge { width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 700; font-size: 1.05rem; flex: none; }
+
+/* wiersze roślin (zamiast kafli) */
+.plants-list { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 16px; }
+.plant-row { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--card-border); border-radius: 16px; padding: 10px 12px; cursor: pointer; transition: border-color .15s ease, background .15s ease, transform .12s ease; }
+.plant-row:hover { border-color: var(--accent-border); background: var(--accent-soft); }
+.plant-row:active { transform: scale(.99); }
+.plant-row .pr-photo { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; flex: none; background: var(--input); display: grid; place-items: center; color: var(--muted-2); }
+.plant-row .pr-info { flex: 1; min-width: 0; }
+.plant-row .pr-name { font-size: .92rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plant-row .pr-sub { font-size: .76rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.plant-row .pr-sub.due { color: var(--warn); font-weight: 700; }
+
+/* mini-pierścień na wierszu */
+.mini-ring { position: relative; width: 36px; height: 36px; flex: none; }
+.mini-ring svg { transform: rotate(-90deg); }
+.mini-ring .mr-track { stroke: var(--track); }
+.mini-ring .mr-bar { stroke: var(--accent); stroke-linecap: round; transition: stroke-dasharray .5s ease; }
+.mini-ring .mr-label { position: absolute; inset: 0; display: grid; place-items: center; font-size: .53rem; font-weight: 700; color: var(--accent); }
+.mini-ring.due .mr-bar { stroke: var(--warn); }
+.mini-ring.due .mr-label { color: var(--warn); }
+
+/* FAB skanowania — tylko na widoku Rośliny (mobile) */
+.scan-fab { display: none; position: fixed; right: 18px; bottom: calc(var(--tabbar-h) + 22px + env(safe-area-inset-bottom)); width: 58px; height: 58px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); box-shadow: var(--shadow); z-index: 31; place-items: center; cursor: pointer; transition: filter .15s ease, transform .12s ease; }
+.scan-fab:hover { filter: brightness(1.08); }
+.scan-fab:active { transform: scale(.94); }
+.scan-fab svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+body.on-plants .scan-fab { display: grid; }
+
+/* stopka wersji (zamiast karty „O aplikacji") */
+.app-version { text-align: center; font-size: .72rem; color: var(--muted-2); margin: 18px 0 6px; line-height: 1.5; }
+
+/* segment motywu (Wygląd) — używa .seg */
+.seg-theme .seg-btn { font-weight: 700; }
+
+/* ============ SIDEBAR (desktop ≥900px) ============ */
+.sidebar { display: none; }
+@media (min-width: 900px) {
+  .topbar { display: none; }
+  .tabbar { display: none; }
+  body { padding-bottom: 40px; }
+  body.on-plants .scan-fab { display: none; }
+  .sidebar {
+    display: flex; flex-direction: column; gap: 4px;
+    position: fixed; left: 0; top: 0; height: 100dvh; width: 232px; box-sizing: border-box;
+    padding: 28px 16px; border-right: 1px solid var(--card-border); background: var(--bg); z-index: 25;
+  }
+  .sidebar-brand { display: flex; align-items: center; gap: 10px; padding: 0 14px 22px; }
+  .sidebar-brand svg { stroke: var(--accent); }
+  .sidebar-brand span { font-size: 1.06rem; font-weight: 700; letter-spacing: -.01em; }
+  .side-link { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 0; border-radius: 12px; cursor: pointer; font-family: inherit; background: none; color: var(--muted); transition: filter .15s ease, background .15s ease; }
+  .side-link svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .side-link span { font-size: .88rem; font-weight: 700; }
+  .side-link:hover { filter: brightness(1.12); background: var(--card); }
+  .side-link.active { background: var(--card); color: var(--accent); }
+  main { margin-left: 232px; max-width: 800px; padding: 40px 40px 100px; }
+  .plants-list { grid-template-columns: 1fr 1fr; }
+  .today-card { grid-column: 1 / -1; }
+}
+
+/* ---------- ikony SVG inline (zamiast emoji) ---------- */
+.ic { flex: none; vertical-align: -.18em; }
+.btn .ic, .chip .ic, .tt-btn .ic { vertical-align: middle; }
+.sec-k { display: flex; align-items: center; gap: 6px; }
+.card h3 { display: flex; align-items: center; gap: 7px; }
+.care-cell .k { display: flex; align-items: center; gap: 5px; }
+.detail-place, .tox-line { display: inline-flex; align-items: center; gap: 5px; }
+.as-ico { color: var(--accent); }
+.as-ico svg { display: block; }
+.tl-ico { color: var(--muted); }
+.fert-ico { color: var(--accent); }
+.empty-ic { color: var(--accent); opacity: .9; }
+.ring-label .ic { vertical-align: 0; }
