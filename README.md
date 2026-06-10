@@ -7,8 +7,9 @@ plan podlewania i nawożenia, dziennik z ewolucją w czasie, konto + synchroniza
 - **Frontend:** czysty HTML/CSS/JS, PWA (offline poza AI/sync), hosting: GitHub Pages
 - **AI:** Pl@ntNet API (darmowe 500 zapytań/dzień, licznik na żywo w apce)
 - **Backend:** Supabase free — auth (e-mail+hasło) + tabela `plants` (jsonb) z RLS per użytkownik
-- **Sync:** offline-first; localStorage to źródło prawdy na urządzeniu, scalanie per-roślina po `updated_at`
-  (last-write-wins), usunięcia przez tombstones; push z debounce 4 s, pull przy starcie/powrocie do apki/online
+- **Sync:** po zalogowaniu Supabase jest źródłem synchronizacji; localStorage działa jako cache offline
+  i bufor zmian bez sieci. Scalanie per-roślina po `updated_at` (last-write-wins), usunięcia przez tombstones;
+  push z debounce 4 s, pull przy starcie/powrocie do apki/online
 
 ## Uruchomienie backendu (raz)
 ```bash
@@ -30,4 +31,4 @@ Dashboard → Restore (działa do 90 dni pauzy).
 ## Funkcje
 Skanuj (gatunek ze zdjęcia) · Doktor (choroba ze zdjęcia AI / objawy offline, zapis do dziennika konkretnej rośliny)
 · pierścień podlewania lato/zima · nawożenie co 30 dni w sezonie · dziennik + ewolucja zdjęciowa
-· licznik limitu AI na żywo · konto i sync multi-device · eksport/import JSON
+· licznik limitu AI na żywo · konto i sync multi-device · status synchronizacji i ręczny przycisk „Synchronizuj teraz”

@@ -48,7 +48,7 @@
       <button class="btn btn-ghost btn-block" id="au-signup">Załóż konto</button>
       <div id="au-msg" class="auth-msg"></div>
       <button class="auth-skip" id="au-skip">Kontynuuj bez konta →</button>
-      <p class="auth-note">Bez konta wszystko działa lokalnie na tym telefonie.<br>Konto dodaje kopię w chmurze i synchronizację urządzeń.</p>
+      <p class="auth-note">Bez konta dane zostają tylko w tej przeglądarce.<br>Konto zapisuje rośliny w Supabase i synchronizuje je między urządzeniami.</p>
     </div>
   </div>
 </section>
@@ -147,7 +147,8 @@
 
     <div class="card">
       <h3>Klucz API Pl@ntNet</h3>
-      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz zostaje tylko w Twoim telefonie.</p>
+      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz jest zapisywany w Twojej chmurze Supabase, więc działa na wszystkich zalogowanych urządzeniach.</p>
+      <p class="muted small">Bezpieczniejszy wariant produkcyjny: skonfiguruj Supabase Edge Function jako proxy do Pl@ntNet i trzymaj sekret po stronie funkcji, żeby nie był widoczny w przeglądarce.</p>
       <div class="row">
         <input type="password" id="api-key" placeholder="Wklej klucz API…" autocomplete="off">
         <button id="save-key" class="btn btn-primary">Zapisz</button>
@@ -168,17 +169,14 @@
     </div>
 
     <div class="card">
-      <h3>Zużycie limitu AI</h3>
-      <div id="usage-card-body"></div>
+      <h3>🏡 Zaproś użytkownika</h3>
+      <p class="muted">Udostępnij wybrany dom/adres drugiej osobie. Zaproszony użytkownik po akceptacji zobaczy tylko ten dom, jego pokoje i rośliny.</p>
+      <div id="invite-card-body"></div>
     </div>
 
     <div class="card">
-      <h3>Twoje dane</h3>
-      <p class="muted">Wszystko trzymane lokalnie na telefonie. Zrób kopię przed zmianą urządzenia.</p>
-      <div class="row">
-        <button id="export-btn" class="btn btn-ghost">⬇️ Eksport JSON</button>
-        <label class="btn btn-ghost" for="import-file">⬆️ Import<input type="file" id="import-file" accept=".json" hidden></label>
-      </div>
+      <h3>Zużycie limitu AI</h3>
+      <div id="usage-card-body"></div>
     </div>
 
     <div class="card">
@@ -216,6 +214,37 @@
 </nav>
 
 <div id="toast" class="toast hidden"></div>
+
+<div id="photo-viewer" class="modal photo-viewer hidden" aria-hidden="true" role="dialog" aria-label="Podgląd zdjęcia">
+  <button class="modal-backdrop" type="button" data-close-photo aria-label="Zamknij podgląd"></button>
+  <div class="photo-viewer-panel">
+    <button class="modal-close" type="button" data-close-photo aria-label="Zamknij">×</button>
+    <img id="photo-viewer-img" src="" alt="Zdjęcie w pełnym rozmiarze">
+  </div>
+</div>
+
+<div id="note-modal" class="modal note-modal hidden" aria-hidden="true" role="dialog" aria-labelledby="note-modal-title">
+  <button class="modal-backdrop" type="button" data-close-note aria-label="Zamknij formularz notatki"></button>
+  <form id="note-form" class="note-panel">
+    <div class="note-head">
+      <h2 id="note-modal-title">Dodaj notatkę</h2>
+      <button class="modal-close" type="button" data-close-note aria-label="Zamknij">×</button>
+    </div>
+    <label class="note-field">
+      <span>Tytuł (opcjonalnie)</span>
+      <input id="note-title" type="text" maxlength="80" placeholder="np. Przesadzanie">
+    </label>
+    <label class="note-field">
+      <span>Treść notatki</span>
+      <textarea id="note-text" rows="6" required placeholder="Co zmieniło się u rośliny?"></textarea>
+    </label>
+    <div class="note-actions">
+      <button class="btn btn-ghost" type="button" data-close-note>Anuluj</button>
+      <button class="btn btn-primary" type="submit">Zapisz</button>
+    </div>
+  </form>
+</div>
+
 
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>

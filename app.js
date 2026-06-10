@@ -6,7 +6,7 @@ const store = {
   get plants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); },
   set plants(v) {
     try { localStorage.setItem("pa_plants", JSON.stringify(v)); }
-    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub zrób eksport"); }
+    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub włącz synchronizację"); }
     window.dispatchEvent(new CustomEvent("pa:change"));
   },
   get homes() { return JSON.parse(localStorage.getItem("pa_homes") || "[]"); },
@@ -17,15 +17,37 @@ const store = {
   set currentHomeId(v) { v ? localStorage.setItem("pa_current_home", v) : localStorage.removeItem("pa_current_home"); },
   get currentRoomId() { return localStorage.getItem("pa_current_room") || ""; },
   set currentRoomId(v) { v ? localStorage.setItem("pa_current_room", v) : localStorage.removeItem("pa_current_room"); },
-  get apiKey() { return localStorage.getItem("pa_apikey") || ""; },
-  set apiKey(v) { localStorage.setItem("pa_apikey", v); },
   get usage() {
     const u = JSON.parse(localStorage.getItem("pa_usage") || "{}");
     const today = new Date().toISOString().slice(0, 10);
     return u.date === today ? u : { date: today, identify: 0, diseases: 0, remaining: null };
   },
   set usage(v) { localStorage.setItem("pa_usage", JSON.stringify(v)); },
+  get rooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); },
+  set rooms(v) {
+    localStorage.setItem("pa_rooms", JSON.stringify(v));
+    window.dispatchEvent(new CustomEvent("pa:change"));
+  },
 };
+
+
+function cloudSettings() { return window.PlantAppCloud || null; }
+function settingsLoaded() { return !!cloudSettings()?.isSettingsLoaded?.(); }
+function hasPlantNetAccess() { return !!cloudSettings()?.hasPlantNetAccess?.(); }
+function plantNetUnavailableMessage() {
+  const cloud = cloudSettings();
+  if (!cloud) return "Ładuję konfigurację chmury…";
+  if (cloud.getSettingsError?.()) return cloud.getSettingsError();
+  if (!cloud.isConfigured?.()) return "Backend Supabase nie jest skonfigurowany — najpierw wygeneruj config.js.";
+  if (!settingsLoaded()) return "Pobieram konfigurację z chmury…";
+  return "Najpierw dodaj klucz Pl@ntNet w Ustawieniach. Klucz jest przechowywany w chmurze.";
+}
+async function fetchPlantNet(kind, formData, options) {
+  const cloud = cloudSettings();
+  if (!cloud) throw new Error("Chmura nie jest jeszcze gotowa — spróbuj ponownie za chwilę.");
+  if (kind === "identify") return cloud.identifyPlant(formData, options);
+  return cloud.identifyDisease(formData, options);
+}
 
 const DAILY_QUOTA = 500;
 function bumpUsage(kind, remaining) {
@@ -58,14 +80,60 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const DAY = 86400000;
+const DEVICE_KEY = "pa_device_id";
+function deviceId() {
+  let id = localStorage.getItem(DEVICE_KEY);
+  if (!id) { id = "local-" + uid(); localStorage.setItem(DEVICE_KEY, id); }
+  return id;
+}
+function currentJournalAuthor() {
+  const u = window.PA_USER || null;
+  return {
+    userId: u?.id || null,
+    userEmail: u?.email || null,
+    displayName: u?.displayName || u?.email || (u ? "użytkownik" : "local"),
+    sourceDevice: deviceId(),
+  };
+}
 
 function isSummer() { const m = new Date().getMonth() + 1; return m >= 4 && m <= 9; }
 function fmtDate(t) { return new Date(t).toLocaleDateString("pl-PL", { day: "numeric", month: "short", year: new Date(t).getFullYear() !== new Date().getFullYear() ? "numeric" : undefined }); }
+function fmtWhen(t) {
+  const startToday = new Date(); startToday.setHours(0, 0, 0, 0);
+  const startThat = new Date(t); startThat.setHours(0, 0, 0, 0);
+  const diff = Math.round((startToday - startThat) / DAY);
+  if (diff === 0) return "dzisiaj";
+  if (diff === 1) return "wczoraj";
+  if (diff > 1 && diff < 7) return diff + " dni temu";
+  return fmtDate(t);
+}
 function toast(msg) {
   const t = $("#toast"); t.textContent = msg; t.classList.remove("hidden");
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+
+function entryPhotos(entry) {
+  if (Array.isArray(entry.photos)) return entry.photos.filter(Boolean);
+  return entry.photo ? [entry.photo] : [];
+}
+function normalizeJournalEntry(entry) {
+  const t = entry.t || entry.createdAt || Date.now();
+  const photos = entryPhotos(entry);
+  return {
+    id: entry.id || uid(),
+    title: entry.title || "",
+    text: entry.text || "",
+    updatedAt: entry.updatedAt || t,
+    userId: null,
+    userEmail: null,
+    displayName: "local",
+    ...entry,
+    t,
+    photos,
+    photo: entry.photo || photos[0],
+  };
+}
 
 // ============ MIGRACJA v1.0 → v1.2 (miejsca/pokoje + history → journal) ============
 const DEFAULT_HOME_NAME = "Mój dom";
@@ -97,20 +165,96 @@ function ensureDefaultPlace() {
   return { homeId: home.id, roomId: room.id };
 }
 
+// ============ POKOJE I MIEJSCA — CRUD ============
+function addRoom(name, homeId = store.currentHomeId) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę pokoju"); return null; }
+  ensureDefaultPlace();
+  const rooms = store.rooms;
+  const now = Date.now();
+  const room = { id: "room_" + uid(), homeId: homeId || store.currentHomeId, name: trimmed, sortOrder: rooms.filter(r => r.homeId === homeId).length, createdAt: now, updatedAt: now };
+  rooms.push(room);
+  store.rooms = rooms;
+  return room;
+}
+function renameRoom(roomId, name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę pokoju"); return false; }
+  const rooms = store.rooms;
+  const room = rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  room.name = trimmed;
+  room.updatedAt = Date.now();
+  store.rooms = rooms;
+  return true;
+}
+function deleteRoom(roomId) {
+  const room = store.rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  if (store.plants.some(p => p.roomId === roomId)) { toast("Najpierw przenieś rośliny z tego pokoju"); return false; }
+  store.rooms = store.rooms.filter(r => r.id !== roomId);
+  if (store.currentRoomId === roomId) store.currentRoomId = "";
+  window.dispatchEvent(new CustomEvent("pa:place-delete", { detail: { kind: "room", id: roomId } }));
+  ensureDefaultPlace();
+  return true;
+}
+function addHome(name, address) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę miejsca"); return null; }
+  const homes = store.homes;
+  const now = Date.now();
+  const home = { id: "home_" + uid(), name: trimmed, address: String(address || "").trim(), createdAt: now, updatedAt: now };
+  homes.push(home);
+  store.homes = homes;
+  store.currentHomeId = home.id;
+  store.currentRoomId = "";
+  ensureDefaultPlace();
+  return home;
+}
+function renameHome(homeId, name, address) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę miejsca"); return false; }
+  const homes = store.homes;
+  const home = homes.find(h => h.id === homeId);
+  if (!home) return false;
+  home.name = trimmed;
+  home.address = String(address || "").trim();
+  home.updatedAt = Date.now();
+  store.homes = homes;
+  return true;
+}
+function movePlantToRoom(plantId, roomId) {
+  const room = store.rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  mutatePlant(plantId, p => { p.roomId = room.id; p.homeId = room.homeId; });
+  return true;
+}
+window.addRoom = addRoom;
+window.renameRoom = renameRoom;
+window.deleteRoom = deleteRoom;
+window.addHome = addHome;
+window.renameHome = renameHome;
+window.movePlantToRoom = movePlantToRoom;
 (function migrate() {
   const def = ensureDefaultPlace();
   const rooms = store.rooms;
   const plants = store.plants;
   let changed = false;
+  const legacyAuthor = { userId: null, userEmail: null, displayName: "local" };
   plants.forEach(p => {
     if (!p.journal) {
-      p.journal = [{ t: p.added || Date.now(), type: "added" }];
-      (p.history || []).forEach(t => p.journal.push({ t, type: "water" }));
+      p.journal = [{ t: p.added || Date.now(), type: "added", ...legacyAuthor }];
+      (p.history || []).forEach(t => p.journal.push({ t, type: "water", ...legacyAuthor }));
       delete p.history;
       changed = true;
     }
     if (!p.homeId || !store.homes.some(h => h.id === p.homeId)) { p.homeId = def.homeId; changed = true; }
     if (!p.roomId || !rooms.some(r => r.id === p.roomId && r.homeId === p.homeId)) { p.roomId = def.roomId; changed = true; }
+    const normalized = (p.journal || []).map(e => normalizeJournalEntry(e));
+    if (JSON.stringify(normalized) !== JSON.stringify(p.journal || [])) {
+      p.journal = normalized;
+      changed = true;
+    }
   });
   if (changed) store.plants = plants;
 })();
@@ -120,11 +264,13 @@ function addJournal(plantId, entry) {
   const plants = store.plants;
   const p = plants.find(x => x.id === plantId);
   if (!p) return false;
+  const now = Date.now();
   p.journal = p.journal || [];
-  p.journal.push({ t: Date.now(), ...entry });
-  p.updatedAt = Date.now();
-  if (entry.type === "water") p.lastWatered = entry.t || Date.now();
-  if (entry.type === "fert") p.lastFertilized = entry.t || Date.now();
+  const journalEntry = normalizeJournalEntry({ t: now, updatedAt: now, ...currentJournalAuthor(), ...entry });
+  p.journal.push(journalEntry);
+  p.updatedAt = now;
+  if (entry.type === "water") p.lastWatered = journalEntry.t;
+  if (entry.type === "fert") p.lastFertilized = journalEntry.t;
   store.plants = plants;
   return true;
 }
@@ -193,7 +339,7 @@ function plantInsights(p) {
   if (f !== null && f <= 0) out.push({ prio: 1, ico: "🌿", text: "Czas nawieźć — ostatnie nawożenie ponad miesiąc temu w sezonie wzrostu." });
   if (!isSummer() && /wysok/i.test(care.humidity)) out.push({ prio: 2, ico: "💨", text: "Sezon grzewczy + roślina lubiąca wilgoć: zraszaj lub dostaw nawilżacz, obserwuj końcówki liści." });
 
-  const photos = j.filter(e => e.photo);
+  const photos = j.filter(e => entryPhotos(e).length);
   const lastPhoto = Math.max(p.added || 0, ...photos.map(e => e.t));
   if (Date.now() - lastPhoto > 30 * DAY) out.push({ prio: 3, ico: "📷", text: "Ponad miesiąc bez zdjęcia — dodaj jedno do ewolucji, łatwiej wychwycisz powolne zmiany." });
 
@@ -386,19 +532,140 @@ window.openAssistant = openAssistant;
 window.sendAssistantMessage = sendAssistantMessage;
 
 // ============ NAWIGACJA ============
-function goto(view) {
-  $$(".view").forEach(v => v.classList.remove("active"));
-  $("#view-" + view).classList.add("active");
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === view));
-  window.scrollTo(0, 0);
+const NAV_VIEWS = new Set(["plants", "scan", "doctor", "settings", "plant-detail"]);
+const VIEW_ANIMATION_CLASSES = ["view-enter-forward", "view-exit-forward", "view-enter-back", "view-exit-back"];
+let currentView = document.querySelector(".view.active")?.id.replace("view-", "") || "plants";
+let currentPlantId = null;
+let navStack = [currentView];
+let navIndex = 0;
+let isApplyingHistoryState = false;
+
+function navUrl(view, state = {}) {
+  const params = new URLSearchParams();
+  params.set("view", view);
+  if (view === "plant-detail" && state.plantId) params.set("plant", state.plantId);
+  return `${location.pathname}${location.search}#${params.toString()}`;
+}
+function makeNavState(view, index = navIndex, state = {}) {
+  return { view, navIndex: index, plantId: state.plantId || null };
+}
+function syncHistoryState(view = currentView, state = {}) {
+  if (!NAV_VIEWS.has(view) || !("history" in window)) return;
+  history.replaceState(makeNavState(view, navIndex, state), "", navUrl(view, state));
+}
+function animateViewChange(fromEl, toEl, direction) {
+  if (!toEl || fromEl === toEl) return;
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    fromEl?.classList.remove(...VIEW_ANIMATION_CLASSES);
+    toEl.classList.remove(...VIEW_ANIMATION_CLASSES);
+    return;
+  }
+  const dir = direction === "back" ? "back" : "forward";
+  const enterClass = `view-enter-${dir}`;
+  const exitClass = `view-exit-${dir}`;
+  fromEl?.classList.remove(...VIEW_ANIMATION_CLASSES);
+  toEl.classList.remove(...VIEW_ANIMATION_CLASSES);
+  if (fromEl) {
+    fromEl.classList.add(exitClass);
+    fromEl.addEventListener("animationend", () => fromEl.classList.remove(exitClass), { once: true });
+  }
+  toEl.classList.add(enterClass);
+  toEl.addEventListener("animationend", () => toEl.classList.remove(enterClass), { once: true });
+}
+function applyViewSideEffects(view) {
   if (view === "plants") renderPlants();
   if (view === "doctor") renderDoctorPlantPicker();
   if (view === "scan" || view === "doctor") updateKeyWarnings();
 }
+function goto(view, options = {}) {
+  if (!NAV_VIEWS.has(view)) return;
+  const target = $("#view-" + view);
+  if (!target) return;
+
+  const fromView = currentView;
+  const fromEl = $("#view-" + fromView);
+  const direction = options.direction || "forward";
+  const state = options.state || {};
+  const previousPlantId = currentPlantId;
+
+  if (view === "plant-detail") currentPlantId = state.plantId || currentPlantId;
+  else currentPlantId = null;
+  const isSameDestination = fromView === view && previousPlantId === currentPlantId;
+
+  if (fromView !== view) animateViewChange(fromEl, target, direction);
+  $$(".view").forEach(v => v.classList.toggle("active", v === target));
+  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === (view === "plant-detail" ? "plants" : view)));
+  currentView = view;
+  window.scrollTo(0, 0);
+  applyViewSideEffects(view);
+
+  if (!isSameDestination && !isApplyingHistoryState && !options.skipHistory && "history" in window) {
+    if (options.replace) {
+      history.replaceState(makeNavState(view, navIndex, { plantId: currentPlantId }), "", navUrl(view, { plantId: currentPlantId }));
+      navStack[navIndex] = view;
+    } else {
+      navStack = navStack.slice(0, navIndex + 1);
+      navStack.push(view);
+      navIndex = navStack.length - 1;
+      history.pushState(makeNavState(view, navIndex, { plantId: currentPlantId }), "", navUrl(view, { plantId: currentPlantId }));
+    }
+  }
+}
+function applyHistoryState(state) {
+  const view = state?.view && NAV_VIEWS.has(state.view) ? state.view : "plants";
+  const targetIndex = typeof state?.navIndex === "number" ? state.navIndex : 0;
+  const direction = targetIndex < navIndex ? "back" : "forward";
+  navIndex = Math.max(0, targetIndex);
+  navStack = navStack.slice(0, navIndex + 1);
+  navStack[navIndex] = view;
+
+  isApplyingHistoryState = true;
+  if (view === "plant-detail") {
+    if (state?.plantId) openDetail(state.plantId, { direction, skipHistory: true });
+    else goto("plants", { direction, skipHistory: true });
+  } else {
+    goto(view, { direction, skipHistory: true });
+  }
+  isApplyingHistoryState = false;
+}
+window.addEventListener("popstate", (e) => applyHistoryState(e.state));
+
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-goto]");
-  if (g) { e.preventDefault(); goto(g.dataset.goto); }
+  if (!g) return;
+  e.preventDefault();
+  const direction = g.classList.contains("back-btn") ? "back" : "forward";
+  if (g.classList.contains("back-btn") && history.state?.navIndex > 0) {
+    history.back();
+    return;
+  }
+  goto(g.dataset.goto, { direction });
 });
+
+syncHistoryState(currentView);
+
+let swipeBackStart = null;
+window.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse" || e.clientX > 24) return;
+  swipeBackStart = { x: e.clientX, y: e.clientY, id: e.pointerId };
+});
+window.addEventListener("pointermove", (e) => {
+  if (!swipeBackStart || e.pointerId !== swipeBackStart.id) return;
+  const dx = e.clientX - swipeBackStart.x;
+  const dy = Math.abs(e.clientY - swipeBackStart.y);
+  if (dx > 12 && dx > dy) e.preventDefault();
+}, { passive: false });
+window.addEventListener("pointerup", (e) => {
+  if (!swipeBackStart || e.pointerId !== swipeBackStart.id) return;
+  const dx = e.clientX - swipeBackStart.x;
+  const dy = Math.abs(e.clientY - swipeBackStart.y);
+  swipeBackStart = null;
+  if (dx > 80 && dy < 70) {
+    if (history.state?.navIndex > 0) history.back();
+    else if (currentView !== "plants") goto("plants", { direction: "back" });
+  }
+});
+window.addEventListener("pointercancel", () => { swipeBackStart = null; });
 
 // ============ PIERŚCIEŃ PODLEWANIA ============
 function ringSVG(plant, size = 54) {
@@ -435,12 +702,19 @@ function renderPlaceControls() {
   if (!homeSelect || !roomChips) return;
   ensureDefaultPlace();
   const homes = store.homes;
-  homeSelect.innerHTML = homes.map(h => `<option value="${esc(h.id)}" ${h.id === store.currentHomeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("");
+  homeSelect.innerHTML = homes.map(h => `<option value="${esc(h.id)}" ${h.id === store.currentHomeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("")
+    + `<option value="__edit_home">✎ Edytuj to miejsce…</option><option value="__add_home">＋ Dodaj miejsce…</option>`;
+  homeSelect.value = store.currentHomeId;
   const rooms = roomsForHome();
   const activeRoomOk = !store.currentRoomId || rooms.some(r => r.id === store.currentRoomId);
   if (!activeRoomOk) store.currentRoomId = "";
+  const activeRoom = rooms.find(r => r.id === store.currentRoomId);
+  const activeRoomEmpty = activeRoom && !store.plants.some(p => p.roomId === activeRoom.id);
   roomChips.innerHTML = `<button class="chip ${!store.currentRoomId ? "active" : ""}" data-room="">Wszystkie pokoje</button>`
-    + rooms.map(r => `<button class="chip ${r.id === store.currentRoomId ? "active" : ""}" data-room="${esc(r.id)}">${esc(r.name)}</button>`).join("");
+    + rooms.map(r => `<button class="chip ${r.id === store.currentRoomId ? "active" : ""}" data-room="${esc(r.id)}">${esc(r.name)}</button>`).join("")
+    + `<button class="chip chip-action" data-action="add-room" aria-label="Dodaj pokój">＋ Pokój</button>`
+    + (activeRoom ? `<button class="chip chip-action" data-action="rename-room" aria-label="Zmień nazwę pokoju">✎</button>` : "")
+    + (activeRoomEmpty ? `<button class="chip chip-action chip-danger" data-action="delete-room" aria-label="Usuń pokój">✕</button>` : "");
   const home = currentHome();
   const count = filteredPlants().length;
   if (hint) hint.textContent = `${count} ${count === 1 ? "roślina" : count < 5 ? "rośliny" : "roślin"} · ${homeLabel(home)}${store.currentRoomId ? " · " + roomName(store.currentRoomId) : ""}`;
@@ -509,28 +783,113 @@ function renderPlants() {
 }
 
 // ============ SZCZEGÓŁY ROŚLINY: dziennik + ewolucja ============
+function journalAuthor(e) { return e.displayName || e.userEmail || (e.userId ? "użytkownik" : "local"); }
 const JOURNAL_META = {
-  added: { ico: "🌱", label: () => "Dodano do kolekcji" },
-  water: { ico: "💧", label: () => "Podlano" },
-  fert: { ico: "🌿", label: () => "Nawożono" },
-  diagnosis: { ico: "🩺", label: e => `Diagnoza: ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
-  photo: { ico: "📷", label: () => "Zdjęcie" },
-  note: { ico: "📝", label: e => esc(e.text) },
+  added: { ico: "🌱", label: e => `Dodał/a ${esc(journalAuthor(e))} do kolekcji` },
+  water: { ico: "💧", label: e => `Podlał/a ${esc(journalAuthor(e))}` },
+  fert: { ico: "🌿", label: e => `Nawiózł/a ${esc(journalAuthor(e))}` },
+  diagnosis: { ico: "🩺", label: e => `Diagnoza (${esc(journalAuthor(e))}): ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
+  photo: { ico: "📷", label: e => `Zdjęcie — ${esc(journalAuthor(e))}` },
+  note: { ico: "📝", label: e => `${esc(journalAuthor(e))}: ${esc(e.title || e.text || "Notatka")}` },
 };
 
-function openDetail(id) {
+const NOTE_COLLAPSE_LIMIT = 180;
+let noteContext = null;
+let photoViewerOpen = false;
+let suppressPhotoPop = false;
+
+function renderTimelineEntry(e, i) {
+  const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
+  const photos = entryPhotos(e);
+  const isNote = e.type === "note";
+  const noteText = e.text || "";
+  const longNote = isNote && noteText.length > NOTE_COLLAPSE_LIMIT;
+  const title = e.title || (isNote ? "Notatka" : m.label(e));
+  const label = isNote ? `
+    <div class="tl-label">
+      <strong class="tl-note-title">${esc(title)}</strong>
+      <div class="tl-note-text ${longNote ? "collapsed" : ""}">${esc(noteText)}</div>
+      <div class="tl-note-author">${esc(journalAuthor(e))}</div>
+    </div>` : `<div class="tl-label">${m.label(e)}</div>`;
+  return `<div class="tl-entry">
+    <div class="tl-ico">${m.ico}</div>
+    <div class="tl-body">
+      ${label}
+      <div class="tl-date">${fmtWhen(e.t)}${e.updatedAt && e.updatedAt !== e.t ? " · edytowano " + fmtWhen(e.updatedAt) : ""}</div>
+      ${photos.map(photo => `<img class="tl-thumb" src="${photo}" alt="" loading="lazy">`).join("")}
+      ${isNote ? `<div class="tl-tools">${longNote ? `<button class="tl-more" type="button">Pokaż całość</button>` : ""}<button class="tl-edit" type="button" data-edit="${e.id}">Edytuj</button></div>` : ""}
+    </div>
+    <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
+  </div>`;
+}
+
+function openPhotoViewer(src) {
+  const modal = $("#photo-viewer"), img = $("#photo-viewer-img");
+  if (!modal || !img || !src) return;
+  img.src = src;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  photoViewerOpen = true;
+  if (!history.state || !history.state.photoViewer) history.pushState({ ...(history.state || {}), photoViewer: true }, "");
+}
+function closePhotoViewer(fromPop = false) {
+  const modal = $("#photo-viewer"), img = $("#photo-viewer-img");
+  if (!modal || modal.classList.contains("hidden")) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  if (img) img.src = "";
+  document.body.classList.remove("modal-open");
+  photoViewerOpen = false;
+  if (!fromPop && history.state?.photoViewer) {
+    suppressPhotoPop = true;
+    history.back();
+  }
+}
+
+function openNoteModal(plantId, entryId = null) {
+  const modal = $("#note-modal"), form = $("#note-form");
+  const titleInput = $("#note-title"), textInput = $("#note-text"), heading = $("#note-modal-title");
+  if (!modal || !form || !titleInput || !textInput) return;
+  const plant = store.plants.find(p => p.id === plantId);
+  const entry = entryId ? (plant?.journal || []).find(e => e.id === entryId) : null;
+  noteContext = { plantId, entryId };
+  heading.textContent = entry ? "Edytuj notatkę" : "Dodaj notatkę";
+  titleInput.value = entry?.title || "";
+  textInput.value = entry?.text || "";
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  setTimeout(() => textInput.focus(), 0);
+}
+function closeNoteModal() {
+  const modal = $("#note-modal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  noteContext = null;
+}
+
+function openDetail(id, options = {}) {
   const p = store.plants.find(x => x.id === id);
-  if (!p) return;
+  if (!p) { goto("plants", { direction: "back", replace: true }); return; }
   const care = careFor(p.latin);
   const d = daysUntilWater(p);
   const fert = daysUntilFert(p);
   const interval = currentInterval(p);
+  ensureDefaultPlace();
+  const homes = store.homes;
+  const rooms = roomsForHome(p.homeId);
+  const activeRoomId = p.roomId;
   const journal = (p.journal || []).slice().sort((a, b) => b.t - a.t);
 
   // ewolucja: wszystkie zdjęcia w czasie (start + dziennik), chronologicznie
   const evoPhotos = [];
   if (p.photo) evoPhotos.push({ t: p.added, photo: p.photo, tag: "start" });
-  (p.journal || []).filter(e => e.photo).sort((a, b) => a.t - b.t).forEach(e => evoPhotos.push({ t: e.t, photo: e.photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
+  (p.journal || []).filter(e => entryPhotos(e).length).sort((a, b) => a.t - b.t).forEach(e => {
+    entryPhotos(e).forEach(photo => evoPhotos.push({ t: e.t, photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
+  });
 
   $("#plant-detail-content").innerHTML = `
     <div class="detail-hero">
@@ -541,6 +900,17 @@ function openDetail(id) {
         <div class="detail-latin">📍 ${esc(homeLabel(store.homes.find(h => h.id === p.homeId) || currentHome()))} · ${esc(roomName(p.roomId))}</div>
         ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px">⚠️ Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px">✓ Bezpieczna dla zwierząt</div>` : ""}
       </div>
+    </div>
+
+    <div class="card room-select-card">
+      <label for="plant-home" class="sec-k">Miejsce</label>
+      <select id="plant-home" class="room-select">
+        ${homes.map(h => `<option value="${esc(h.id)}" ${h.id === p.homeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("")}
+      </select>
+      <label for="plant-room" class="sec-k" style="margin-top:10px">Pokój</label>
+      <select id="plant-room" class="room-select">
+        ${rooms.map(r => `<option value="${esc(r.id)}" ${r.id === activeRoomId ? "selected" : ""}>${esc(r.name)}</option>`).join("")}
+      </select>
     </div>
 
     <div class="water-block">
@@ -599,34 +969,36 @@ function openDetail(id) {
 
     <div class="card">
       <div class="sec-k">📖 Dziennik (${journal.length})</div>
-      ${journal.length ? `<div class="timeline">${journal.map((e, i) => {
-        const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
-        return `<div class="tl-entry">
-          <div class="tl-ico">${m.ico}</div>
-          <div class="tl-body">
-            <div class="tl-label">${m.label(e)}</div>
-            <div class="tl-date">${fmtDate(e.t)}</div>
-            ${e.photo && e.type !== "photo" ? `<img class="tl-thumb" src="${e.photo}" alt="" loading="lazy">` : ""}
-          </div>
-          <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
-        </div>`;
-      }).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
+      ${journal.length ? `<div class="timeline">${journal.map((e, i) => renderTimelineEntry(e, i)).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
     </div>
 
     <button class="btn btn-danger btn-block" id="delete-plant">Usuń roślinę</button>
   `;
 
+  $("#plant-room").onchange = (e) => {
+    if (movePlantToRoom(id, e.target.value)) toast("Przeniesiono roślinę");
+    openDetail(id);
+  };
+  $("#plant-home").onchange = (e) => {
+    const homeId = e.target.value;
+    const targetRooms = roomsForHome(homeId);
+    let room = targetRooms[0];
+    if (!room) {
+      const now = Date.now();
+      room = { id: "room_" + uid(), homeId, name: DEFAULT_ROOM_NAME, sortOrder: 0, createdAt: now, updatedAt: now };
+      store.rooms = [...store.rooms, room];
+    }
+    if (movePlantToRoom(id, room.id)) toast("Przeniesiono roślinę");
+    openDetail(id);
+  };
   $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
   const fertBtn = $("#fert-now");
   if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
-  $("#add-note").onclick = () => {
-    const text = prompt("Notatka (np. „przesadzona do większej doniczki”):");
-    if (text && text.trim()) { addJournal(id, { type: "note", text: text.trim() }); openDetail(id); }
-  };
+  $("#add-note").onclick = () => openNoteModal(id);
   $("#journal-photo-file").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const photo = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
-    addJournal(id, { type: "photo", photo });
+    addJournal(id, { type: "photo", title: "Zdjęcie", photos: [photo], photo });
     toast("📷 Dodano do dziennika"); openDetail(id);
   });
   $("#diagnose-this").addEventListener("click", () => { doctorPlantId = id; }, { capture: true });
@@ -641,16 +1013,30 @@ function openDetail(id) {
     });
     openDetail(id);
   });
+  $$("#plant-detail-content .tl-more").forEach(btn => btn.onclick = () => {
+    const text = btn.closest(".tl-body")?.querySelector(".tl-note-text");
+    if (!text) return;
+    const collapsed = text.classList.toggle("collapsed");
+    btn.textContent = collapsed ? "Pokaż całość" : "Zwiń";
+  });
+  $$("#plant-detail-content .tl-edit").forEach(btn => btn.onclick = () => openNoteModal(id, btn.dataset.edit));
+  $$("#plant-detail-content .detail-photo, #plant-detail-content .evo-item img, #plant-detail-content .tl-thumb").forEach(img => {
+    if (img.tagName === "IMG") img.addEventListener("click", (ev) => { ev.stopPropagation(); openPhotoViewer(img.currentSrc || img.src); });
+  });
   $("#delete-plant").onclick = () => {
     if (confirm(`Usunąć „${p.name}" razem z dziennikiem?`)) {
       store.plants = store.plants.filter(x => x.id !== id);
-      window.dispatchEvent(new CustomEvent("pa:delete", { detail: id }));
+      window.dispatchEvent(new CustomEvent("pa:delete", { detail: { id, userId: p._cloudUserId, homeId: p.homeId } }));
       toast("Usunięto"); goto("plants");
     }
   };
-  goto("plant-detail");
+  goto("plant-detail", {
+    direction: options.direction || "forward",
+    skipHistory: options.skipHistory,
+    replace: options.replace || (currentView === "plant-detail" && currentPlantId === id),
+    state: { plantId: id },
+  });
   openAssistant(id);
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === "plants"));
 }
 function mutatePlant(id, fn) {
   const plants = store.plants;
@@ -686,7 +1072,7 @@ $("#scan-file").addEventListener("change", async (e) => {
   scanBlob = await fileToCompressed(f);
   scanThumb = await blobToDataURL(await fileToCompressed(f, 480, 0.8));
   $("#scan-preview").innerHTML = `<img src="${URL.createObjectURL(scanBlob)}" alt="Podgląd zdjęcia">`;
-  $("#scan-go").disabled = !store.apiKey;
+  updateKeyWarnings();
   $("#scan-results").innerHTML = "";
 });
 $("#organ-chips").addEventListener("click", (e) => {
@@ -705,8 +1091,7 @@ $("#scan-go").addEventListener("click", async () => {
     const fd = new FormData();
     fd.append("images", scanBlob, "photo.jpg");
     fd.append("organs", organ);
-    const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${encodeURIComponent(store.apiKey)}&lang=pl&nb-results=4`;
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetchPlantNet("identify", fd, { organ, lang: "pl", nbResults: 4 });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź klucz i Authorized domains w panelu PlantNet.");
     if (res.status === 404) throw new Error("Nie rozpoznano rośliny. Spróbuj wyraźniejszego zdjęcia liścia lub kwiatu.");
     if (res.status === 429) throw new Error("Wyczerpany dzienny limit (500/dzień). Spróbuj jutro.");
@@ -718,7 +1103,7 @@ $("#scan-go").addEventListener("click", async () => {
   } catch (err) {
     st.classList.add("error");
     st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — identyfikacja wymaga połączenia.";
-  } finally { $("#scan-go").disabled = false; }
+  } finally { updateKeyWarnings(); }
 });
 
 function renderScanResults(results) {
@@ -753,7 +1138,7 @@ function addPlant(latin, displayName) {
   const place = ensureDefaultPlace();
   const homeId = store.currentHomeId || place.homeId;
   const roomId = store.currentRoomId || place.roomId;
-  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
+  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [normalizeJournalEntry({ t: Date.now(), type: "added", title: "Dodano do kolekcji", ...currentJournalAuthor() })] });
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
@@ -790,7 +1175,7 @@ $("#doctor-file").addEventListener("change", async (e) => {
   doctorBlob = await fileToCompressed(f);
   doctorThumb = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
   $("#doctor-preview").innerHTML = `<img src="${URL.createObjectURL(doctorBlob)}" alt="Podgląd zdjęcia">`;
-  $("#doctor-go").disabled = !store.apiKey;
+  updateKeyWarnings();
   $("#doctor-results").innerHTML = "";
 });
 
@@ -804,8 +1189,7 @@ $("#doctor-go").addEventListener("click", async () => {
     const fd = new FormData();
     fd.append("images", doctorBlob, "photo.jpg");
     fd.append("organs", "auto");
-    const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${encodeURIComponent(store.apiKey)}&nb-results=3`;
-    const res = await fetch(url, { method: "POST", body: fd });
+    const res = await fetchPlantNet("disease", fd, { nbResults: 3 });
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź panel PlantNet.");
     if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia zmiany — albo trybu „Po objawach”.");
     if (res.status === 429) throw new Error("Limit dzienny wyczerpany. Użyj trybu „Po objawach”.");
@@ -820,12 +1204,12 @@ $("#doctor-go").addEventListener("click", async () => {
   } catch (err) {
     st.classList.add("error");
     st.textContent = navigator.onLine ? (err.message || "Coś poszło nie tak.") : "Brak internetu — użyj trybu „Po objawach” (offline).";
-  } finally { $("#doctor-go").disabled = false; }
+  } finally { updateKeyWarnings(); }
 });
 
 function saveDiagnosis(name, score, src) {
   if (!doctorPlantId) { toast("Wybierz roślinę u góry, żeby zapisać do dziennika"); return false; }
-  const ok = addJournal(doctorPlantId, { type: "diagnosis", name, score, src, photo: src === "ai" ? doctorThumb : undefined });
+  const ok = addJournal(doctorPlantId, { type: "diagnosis", title: `Diagnoza: ${name}`, text: "", name, score, src, photos: src === "ai" && doctorThumb ? [doctorThumb] : [], photo: src === "ai" ? doctorThumb : undefined });
   if (ok) {
     const p = store.plants.find(x => x.id === doctorPlantId);
     toast(`🩺 Zapisano w dzienniku: ${p.name}`);
@@ -878,42 +1262,52 @@ function renderSymptoms() {
 
 // ============ USTAWIENIA ============
 function updateKeyWarnings() {
-  const has = !!store.apiKey;
-  $("#scan-keywarn").classList.toggle("hidden", has);
-  $("#doctor-keywarn").classList.toggle("hidden", has);
+  const has = hasPlantNetAccess();
+  const msg = plantNetUnavailableMessage();
+  [$("#scan-keywarn"), $("#doctor-keywarn")].forEach(el => {
+    el.classList.toggle("hidden", has);
+    if (!has) el.innerHTML = `${esc(msg)} <a href="#" data-goto="settings">Ustawienia</a>`;
+  });
   $("#scan-go").disabled = !(has && scanBlob);
   $("#doctor-go").disabled = !(has && doctorBlob);
 }
-$("#save-key").addEventListener("click", () => {
-  const v = $("#api-key").value.trim();
-  store.apiKey = v;
-  $("#key-status").textContent = v ? "✓ Klucz zapisany lokalnie." : "Klucz usunięty.";
+async function refreshApiKeyField() {
+  const cloud = cloudSettings();
+  const input = $("#api-key");
+  const status = $("#key-status");
+  if (!cloud) { status.textContent = "Ładuję połączenie z chmurą…"; updateKeyWarnings(); return; }
+  if (cloud.hasPlantNetProxy?.()) {
+    input.value = "";
+    input.placeholder = "Zapytania obsługuje Supabase Edge Function";
+    status.textContent = "✓ Aktywny bezpieczniejszy wariant: zapytania idą przez Supabase Edge Function, więc sekret nie jest widoczny w przeglądarce.";
+    updateKeyWarnings();
+    return;
+  }
+  input.placeholder = "Wklej klucz API…";
+  if (!cloud.isSettingsLoaded?.()) { status.textContent = "Pobieram klucz z chmury…"; updateKeyWarnings(); return; }
+  if (cloud.getSettingsError?.()) { status.textContent = cloud.getSettingsError(); updateKeyWarnings(); return; }
+  input.value = await cloud.getPlantNetApiKey?.() || "";
+  status.textContent = input.value ? "✓ Klucz pobrany z chmury." : "Brak klucza w chmurze.";
   updateKeyWarnings();
-  toast(v ? "Klucz zapisany" : "Klucz usunięty");
-});
-
-$("#export-btn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ plants: store.plants, homes: store.homes, rooms: store.rooms, currentHomeId: store.currentHomeId, currentRoomId: store.currentRoomId, exported: new Date().toISOString(), version: "1.2" }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "plantapp-backup-" + new Date().toISOString().slice(0, 10) + ".json";
-  a.click();
-});
-$("#import-file").addEventListener("change", async (e) => {
-  const f = e.target.files[0]; if (!f) return;
+}
+$("#save-key").addEventListener("click", async () => {
+  const cloud = cloudSettings();
+  const v = $("#api-key").value.trim();
+  if (!cloud?.savePlantNetApiKey) { $("#key-status").textContent = "Chmura nie jest jeszcze gotowa."; return; }
+  $("#save-key").disabled = true;
+  $("#key-status").textContent = "Zapisuję w chmurze…";
   try {
-    const data = JSON.parse(await f.text());
-    if (!Array.isArray(data.plants)) throw 0;
-    if (Array.isArray(data.homes)) store.homes = data.homes;
-    if (Array.isArray(data.rooms)) store.rooms = data.rooms;
-    if (data.currentHomeId) store.currentHomeId = data.currentHomeId;
-    if (data.currentRoomId) store.currentRoomId = data.currentRoomId;
-    store.plants = data.plants;
-    ensureDefaultPlace();
-    toast("Zaimportowano " + data.plants.length + " roślin");
-    goto("plants");
-  } catch { toast("Nieprawidłowy plik kopii"); }
+    await cloud.savePlantNetApiKey(v);
+    $("#key-status").textContent = v ? "✓ Klucz zapisany w chmurze." : "Klucz usunięty z chmury.";
+    updateKeyWarnings();
+    toast(v ? "Klucz zapisany w chmurze" : "Klucz usunięty z chmury");
+  } catch (err) {
+    $("#key-status").textContent = err.message || "Nie udało się zapisać klucza.";
+  } finally {
+    $("#save-key").disabled = false;
+  }
 });
+window.addEventListener("pa:settings", refreshApiKeyField);
 
 // ============ POWIADOMIENIA ============
 $("#notif-btn").addEventListener("click", async () => {
@@ -938,6 +1332,46 @@ function checkDueAndNotify() {
   }
 }
 
+
+// ============ MODALE: zdjęcia i notatki ============
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-photo]")) closePhotoViewer();
+  if (e.target.closest("[data-close-note]")) closeNoteModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#photo-viewer")?.classList.contains("hidden")) closePhotoViewer();
+  else if (!$("#note-modal")?.classList.contains("hidden")) closeNoteModal();
+});
+window.addEventListener("popstate", () => {
+  if (suppressPhotoPop) { suppressPhotoPop = false; return; }
+  if (photoViewerOpen) closePhotoViewer(true);
+});
+$("#note-form")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!noteContext) return;
+  const title = $("#note-title").value.trim();
+  const text = $("#note-text").value.trim();
+  if (!text) { toast("Wpisz treść notatki"); return; }
+  if (noteContext.entryId) {
+    mutatePlant(noteContext.plantId, p => {
+      const entry = (p.journal || []).find(e => e.id === noteContext.entryId);
+      if (entry) {
+        entry.title = title;
+        entry.text = text;
+        entry.updatedAt = Date.now();
+      }
+    });
+    toast("📝 Zaktualizowano notatkę");
+  } else {
+    addJournal(noteContext.plantId, { type: "note", title, text });
+    toast("📝 Dodano notatkę");
+  }
+  const plantId = noteContext.plantId;
+  closeNoteModal();
+  openDetail(plantId);
+});
+
 // ============ START ============
 function init() {
   const intro = $("#leaf-intro");
@@ -945,9 +1379,40 @@ function init() {
     if (sessionStorage.getItem("pa_intro")) intro.classList.add("skip");
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
-  $("#api-key").value = store.apiKey;
-  $("#home-select")?.addEventListener("change", (e) => { store.currentHomeId = e.target.value; store.currentRoomId = ""; renderPlants(); });
-  $("#room-chips")?.addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (!c) return; store.currentRoomId = c.dataset.room || ""; renderPlants(); });
+  refreshApiKeyField();
+  $("#home-select")?.addEventListener("change", (e) => {
+    const v = e.target.value;
+    if (v === "__add_home") {
+      const name = prompt("Nazwa miejsca (np. „Mieszkanie w Krakowie”):");
+      if (name !== null) { const home = addHome(name, prompt("Adres (opcjonalnie):") || ""); if (home) toast("Dodano miejsce"); }
+    } else if (v === "__edit_home") {
+      const home = currentHome();
+      const name = prompt("Nazwa miejsca:", home.name);
+      if (name !== null && renameHome(home.id, name, prompt("Adres (opcjonalnie):", home.address || "") || "")) toast("Zapisano miejsce");
+    } else {
+      store.currentHomeId = v;
+      store.currentRoomId = "";
+    }
+    renderPlants();
+  });
+  $("#room-chips")?.addEventListener("click", (e) => {
+    const c = e.target.closest(".chip"); if (!c) return;
+    const action = c.dataset.action;
+    if (action === "add-room") {
+      const name = prompt("Nazwa pokoju (np. „Salon”):");
+      if (name !== null) { const room = addRoom(name); if (room) { store.currentRoomId = room.id; toast("Dodano pokój"); } }
+    } else if (action === "rename-room") {
+      const room = store.rooms.find(r => r.id === store.currentRoomId);
+      const name = prompt("Nowa nazwa pokoju:", room?.name || "");
+      if (name !== null && renameRoom(store.currentRoomId, name)) toast("Zmieniono nazwę pokoju");
+    } else if (action === "delete-room") {
+      const room = store.rooms.find(r => r.id === store.currentRoomId);
+      if (room && confirm(`Usunąć pusty pokój „${room.name}”?`) && deleteRoom(room.id)) toast("Usunięto pokój");
+    } else {
+      store.currentRoomId = c.dataset.room || "";
+    }
+    renderPlants();
+  });
   renderSymptoms();
   renderPlants();
   renderDoctorPlantPicker();
