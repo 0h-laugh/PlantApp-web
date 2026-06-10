@@ -391,3 +391,29 @@ body.auth-open { overflow: hidden; }
 .as-txt { font-size: .86rem; line-height: 1.45; color: var(--ink-dim); }
 .as-txt strong { color: var(--ink); }
 .as-card .as-line { display: flex; gap: 10px; align-items: flex-start; font-size: .87rem; line-height: 1.5; color: var(--ink-dim); padding: 6px 0; }
+
+/* ---------- AI asystent rośliny ---------- */
+.assistant-chat {
+  background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--radius);
+  padding: 14px; margin: 14px 0;
+}
+.assistant-chat-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 12px; }
+.assistant-safe { color: var(--ink-dim); font-size: .78rem; line-height: 1.45; margin-top: 4px; }
+.assistant-messages {
+  display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto;
+  background: var(--bg-soft); border: 1px solid var(--card-edge); border-radius: 14px; padding: 10px;
+}
+.assistant-empty { color: var(--ink-dim); font-size: .86rem; line-height: 1.5; padding: 8px; text-align: center; }
+.assistant-msg { max-width: 88%; border: 1px solid var(--card-edge); border-radius: 14px; padding: 9px 11px; }
+.assistant-msg-user { align-self: flex-end; background: rgba(123, 201, 106, .14); border-color: rgba(123, 201, 106, .42); }
+.assistant-msg-assistant { align-self: flex-start; background: var(--card); }
+.assistant-msg-role { font-size: .68rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 4px; }
+.assistant-msg-content { white-space: pre-wrap; font-size: .88rem; line-height: 1.5; }
+.assistant-form { display: flex; gap: 8px; margin-top: 10px; }
+.assistant-form input {
+  flex: 1; min-width: 0; background: var(--bg-soft); border: 1px solid var(--card-edge);
+  border-radius: 14px; padding: 12px; color: var(--ink); font-family: inherit; font-size: .9rem;
+}
+.assistant-form input:focus-visible { outline: 2px solid var(--leaf); border-color: var(--leaf); }
+.assistant-form .btn { padding: 12px 14px; }
+.assistant-warning { color: var(--alert); font-size: .78rem; line-height: 1.4; margin-top: 8px; }
