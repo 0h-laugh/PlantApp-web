@@ -173,6 +173,14 @@
     clear() { localStorage.removeItem("pa_tombstones"); },
   };
 
+  // usunięte pokoje — do skasowania w chmurze, inaczej pull je wskrzesi
+  const placeTombs = {
+    get list() { return JSON.parse(localStorage.getItem("pa_place_tombstones") || "[]"); },
+    get ids() { return new Set(this.list); },
+    add(id) { const l = this.list; if (!l.includes(id)) { l.push(id); localStorage.setItem("pa_place_tombstones", JSON.stringify(l)); } },
+    clear() { localStorage.removeItem("pa_place_tombstones"); },
+  };
+
   function setStatus(msg, err) {
     const el = document.querySelector("#sync-status");
     if (el) { el.textContent = msg; el.classList.toggle("usage-low", !!err); }
@@ -415,6 +423,10 @@
       const { error } = await sb.from("rooms").upsert(rooms, { onConflict: "id" });
       if (error) { setStatus("Błąd wysyłki pokoi: " + error.message, true); return; }
     }
+    if (placeTombs.list.length) {
+      const { error } = await sb.from("rooms").delete().in("id", placeTombs.list);
+      if (!error) placeTombs.clear();
+    }
     const plants = localPlants();
     const rows = plants.map(p => {
       const { _cloudUserId, ...data } = p;
@@ -466,8 +478,10 @@
       if (!mine || remoteT > mineT) homesById[row.id] = { id: row.id, ownerId: row.owner_id, name: row.name, address: row.address || "", createdAt: new Date(row.created_at).getTime(), updatedAt: remoteT };
       else if (mine && !mine.ownerId) mine.ownerId = row.owner_id;
     }
+    const deadRooms = placeTombs.ids;
     const roomsById = Object.fromEntries(localRooms().map(r => [r.id, r]));
     for (const row of roomRows || []) {
+      if (deadRooms.has(row.id)) continue; // lokalnie usunięty pokój — delete poleci przy push
       const remoteT = new Date(row.updated_at).getTime();
       const mine = roomsById[row.id];
       const mineT = mine ? (mine.updatedAt || mine.createdAt || 0) : 0;
@@ -519,6 +533,7 @@
   window.addEventListener("pa:change", schedulePush);
   window.addEventListener("pa:places-change", schedulePush);
   window.addEventListener("pa:delete", (e) => { tombs.add(e.detail); schedulePush(); });
+  window.addEventListener("pa:place-delete", (e) => { if (e.detail?.kind === "room" && e.detail.id) { placeTombs.add(e.detail.id); schedulePush(); } });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && user && Date.now() - lastPull > 5 * 60000) fullSync(false);
   });
