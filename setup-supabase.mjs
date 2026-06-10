@@ -32,6 +32,23 @@ create table if not exists public.home_members (
   primary key (home_id, user_id)
 );
 
+create table if not exists public.home_invites (
+  token text primary key,
+  home_id text not null references public.homes(id) on delete cascade,
+  email text not null,
+  invited_by uuid not null references auth.users(id) on delete cascade,
+  accepted_by uuid references auth.users(id) on delete set null,
+  status text not null default 'pending',
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz
+);
+
+create table if not exists public.user_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  settings jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.rooms (
   id text primary key,
   home_id text not null references public.homes(id) on delete cascade,
@@ -53,12 +70,35 @@ create table if not exists public.plants (
 alter table public.plants add column if not exists home_id text references public.homes(id) on delete set null;
 alter table public.plants add column if not exists room_id text references public.rooms(id) on delete set null;
 
+create table if not exists public.plant_journal_entries (
+  id text primary key,
+  plant_id text not null references public.plants(id) on delete cascade,
+  home_id text references public.homes(id) on delete cascade,
+  entry jsonb not null,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users(id) on delete set null
+);
+
+create table if not exists public.plant_photos (
+  id text primary key,
+  plant_id text not null references public.plants(id) on delete cascade,
+  home_id text references public.homes(id) on delete cascade,
+  kind text not null default 'journal',
+  data_url text not null,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users(id) on delete set null
+);
+
 create or replace view public.places with (security_invoker = true) as select * from public.homes;
 
 alter table public.homes enable row level security;
 alter table public.home_members enable row level security;
+alter table public.home_invites enable row level security;
+alter table public.user_settings enable row level security;
 alter table public.rooms enable row level security;
 alter table public.plants enable row level security;
+alter table public.plant_journal_entries enable row level security;
+alter table public.plant_photos enable row level security;
 
 create or replace function public.is_home_member(home_id_arg text, user_id_arg uuid)
 returns boolean
@@ -107,6 +147,22 @@ create policy "home_members_delete_owner" on public.home_members for delete usin
   exists (select 1 from public.homes h where h.id = home_id and h.owner_id = auth.uid())
 );
 
+drop policy if exists "home_invites_select_relevant" on public.home_invites;
+create policy "home_invites_select_relevant" on public.home_invites for select using (
+  invited_by = auth.uid() or lower(email) = lower((auth.jwt() ->> 'email')) or public.is_home_member(home_id, auth.uid())
+);
+drop policy if exists "home_invites_insert_owner" on public.home_invites;
+create policy "home_invites_insert_owner" on public.home_invites for insert with check (public.is_home_member(home_id, auth.uid()) and invited_by = auth.uid());
+drop policy if exists "home_invites_update_relevant" on public.home_invites;
+create policy "home_invites_update_relevant" on public.home_invites for update using (invited_by = auth.uid() or lower(email) = lower((auth.jwt() ->> 'email'))) with check (invited_by = auth.uid() or accepted_by = auth.uid());
+
+drop policy if exists "user_settings_select_own" on public.user_settings;
+create policy "user_settings_select_own" on public.user_settings for select using (user_id = auth.uid());
+drop policy if exists "user_settings_upsert_own" on public.user_settings;
+create policy "user_settings_upsert_own" on public.user_settings for insert with check (user_id = auth.uid());
+drop policy if exists "user_settings_update_own" on public.user_settings;
+create policy "user_settings_update_own" on public.user_settings for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+
 drop policy if exists "rooms_select_member" on public.rooms;
 create policy "rooms_select_member" on public.rooms for select using (public.is_home_member(home_id, auth.uid()));
 drop policy if exists "rooms_insert_member" on public.rooms;
@@ -139,12 +195,30 @@ create policy "plants_delete_home_member" on public.plants for delete using (
   auth.uid() = user_id or (home_id is not null and public.is_home_member(home_id, auth.uid()))
 );
 
+drop policy if exists "plant_journal_select_member" on public.plant_journal_entries;
+create policy "plant_journal_select_member" on public.plant_journal_entries for select using (home_id is null or public.is_home_member(home_id, auth.uid()));
+drop policy if exists "plant_journal_write_member" on public.plant_journal_entries;
+create policy "plant_journal_write_member" on public.plant_journal_entries for insert with check (home_id is null or public.is_home_member(home_id, auth.uid()));
+drop policy if exists "plant_journal_update_member" on public.plant_journal_entries;
+create policy "plant_journal_update_member" on public.plant_journal_entries for update using (home_id is null or public.is_home_member(home_id, auth.uid())) with check (home_id is null or public.is_home_member(home_id, auth.uid()));
+
+drop policy if exists "plant_photos_select_member" on public.plant_photos;
+create policy "plant_photos_select_member" on public.plant_photos for select using (home_id is null or public.is_home_member(home_id, auth.uid()));
+drop policy if exists "plant_photos_write_member" on public.plant_photos;
+create policy "plant_photos_write_member" on public.plant_photos for insert with check (home_id is null or public.is_home_member(home_id, auth.uid()));
+drop policy if exists "plant_photos_update_member" on public.plant_photos;
+create policy "plant_photos_update_member" on public.plant_photos for update using (home_id is null or public.is_home_member(home_id, auth.uid())) with check (home_id is null or public.is_home_member(home_id, auth.uid()));
+
 create index if not exists homes_owner_idx on public.homes(owner_id);
 create index if not exists home_members_user_idx on public.home_members(user_id);
+create index if not exists home_invites_email_idx on public.home_invites(lower(email));
+create index if not exists user_settings_updated_idx on public.user_settings(updated_at);
 create index if not exists rooms_home_idx on public.rooms(home_id);
 create index if not exists plants_user_idx on public.plants(user_id);
 create index if not exists plants_home_idx on public.plants(home_id);
 create index if not exists plants_room_idx on public.plants(room_id);
+create index if not exists plant_journal_entries_plant_idx on public.plant_journal_entries(plant_id);
+create index if not exists plant_photos_plant_idx on public.plant_photos(plant_id);
 `;
 
 async function api(path, opts = {}) {
@@ -197,7 +271,7 @@ const genPass = () => "Pa_" + [...crypto.getRandomValues(new Uint8Array(18))].ma
 
   console.log("→ Zakładam schemat + RLS…");
   await api(`/v1/projects/${ref}/database/query`, { method: "POST", body: JSON.stringify({ query: SQL }) });
-  console.log("  ✓ Tabele public.homes, public.rooms i public.plants z politykami RLS");
+  console.log("  ✓ Tabele homes/rooms/plants, invites, user_settings i znormalizowany dziennik z politykami RLS");
 
   console.log("→ Włączam auto-potwierdzanie e-maili (bez klikania w linki)…");
   await api(`/v1/projects/${ref}/config/auth`, { method: "PATCH", body: JSON.stringify({ mailer_autoconfirm: true }) });

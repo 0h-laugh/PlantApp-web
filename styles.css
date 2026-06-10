@@ -391,3 +391,33 @@ body.auth-open { overflow: hidden; }
 .as-txt { font-size: .86rem; line-height: 1.45; color: var(--ink-dim); }
 .as-txt strong { color: var(--ink); }
 .as-card .as-line { display: flex; gap: 10px; align-items: flex-start; font-size: .87rem; line-height: 1.5; color: var(--ink-dim); padding: 6px 0; }
+
+/* Conflict-free feature merge: room CRUD, modals, timeline notes, history navigation */
+.room-actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+.mini-btn { border:0; border-radius:999px; padding:6px 10px; background:rgba(255,255,255,.12); color:inherit; font:inherit; font-size:.78rem; cursor:pointer; }
+.mini-btn:active { transform:translateY(1px); }
+.room-select-label { display:block; margin-top:8px; font-size:.78rem; color:var(--muted); }
+.room-select-label select { width:100%; margin-top:4px; border-radius:12px; border:1px solid rgba(255,255,255,.16); background:rgba(0,0,0,.18); color:inherit; padding:8px 10px; }
+.tl-note-text { margin-top:6px; line-height:1.45; white-space:pre-wrap; }
+.tl-note-text.collapsed { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+.tl-photos { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+.tl-thumb { width:72px; height:72px; object-fit:cover; border-radius:14px; cursor:zoom-in; }
+.tl-note-actions { display:flex; gap:6px; margin-top:8px; }
+.modal { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:20px; background:rgba(4,10,7,.74); backdrop-filter:blur(10px); }
+.modal.hidden { display:none; }
+.modal-open { overflow:hidden; }
+#photo-viewer-img { max-width:100%; max-height:84vh; border-radius:22px; box-shadow:0 24px 80px rgba(0,0,0,.45); }
+.modal-close { position:fixed; top:calc(env(safe-area-inset-top) + 16px); right:18px; width:44px; height:44px; border:0; border-radius:999px; background:rgba(255,255,255,.18); color:#fff; font-size:30px; line-height:1; }
+.modal-card { width:min(520px, 100%); background:var(--card); border:1px solid rgba(255,255,255,.12); border-radius:24px; padding:18px; box-shadow:0 24px 80px rgba(0,0,0,.4); }
+.modal-card input, .modal-card textarea { width:100%; box-sizing:border-box; margin-top:10px; border-radius:16px; border:1px solid rgba(255,255,255,.14); background:rgba(0,0,0,.18); color:inherit; padding:12px 14px; font:inherit; }
+.modal-card textarea { resize:vertical; min-height:130px; }
+.modal-actions { justify-content:flex-end; margin-top:12px; }
+.view-enter-forward { animation:viewInForward .24s ease both; }
+.view-exit-forward { animation:viewOutForward .24s ease both; }
+.view-enter-back { animation:viewInBack .24s ease both; }
+.view-exit-back { animation:viewOutBack .24s ease both; }
+@keyframes viewInForward { from { opacity:0; transform:translateX(18px); } to { opacity:1; transform:none; } }
+@keyframes viewOutForward { from { opacity:1; transform:none; } to { opacity:0; transform:translateX(-12px); } }
+@keyframes viewInBack { from { opacity:0; transform:translateX(-18px); } to { opacity:1; transform:none; } }
+@keyframes viewOutBack { from { opacity:1; transform:none; } to { opacity:0; transform:translateX(12px); } }
+@media (prefers-reduced-motion: reduce) { .view-enter-forward, .view-exit-forward, .view-enter-back, .view-exit-back { animation:none; } }

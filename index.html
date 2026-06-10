@@ -147,7 +147,7 @@
 
     <div class="card">
       <h3>Klucz API Pl@ntNet</h3>
-      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz zostaje tylko w Twoim telefonie.</p>
+      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Po zalogowaniu klucz zapisuje się w Supabase i synchronizuje między urządzeniami; produkcyjnie można podpiąć Edge Function, żeby nie ujawniać sekretu w przeglądarce.</p>
       <div class="row">
         <input type="password" id="api-key" placeholder="Wklej klucz API…" autocomplete="off">
         <button id="save-key" class="btn btn-primary">Zapisz</button>
@@ -173,12 +173,17 @@
     </div>
 
     <div class="card">
-      <h3>Twoje dane</h3>
-      <p class="muted">Wszystko trzymane lokalnie na telefonie. Zrób kopię przed zmianą urządzenia.</p>
+      <h3>Udostępnianie domu</h3>
+      <p class="muted">Zaproś domownika e-mailem albo wklej kod zaproszenia, żeby synchronizować wybrany dom, pokoje i rośliny.</p>
       <div class="row">
-        <button id="export-btn" class="btn btn-ghost">⬇️ Eksport JSON</button>
-        <label class="btn btn-ghost" for="import-file">⬆️ Import<input type="file" id="import-file" accept=".json" hidden></label>
+        <input type="email" id="invite-email" placeholder="E-mail domownika" autocomplete="email">
+        <button id="invite-create" class="btn btn-primary">Zaproś</button>
       </div>
+      <div class="row">
+        <input type="text" id="invite-token" placeholder="Kod zaproszenia">
+        <button id="invite-accept" class="btn btn-ghost">Przyjmij</button>
+      </div>
+      <div id="invite-status" class="muted small"></div>
     </div>
 
     <div class="card">
@@ -213,6 +218,23 @@
     <span>Więcej</span>
   </button>
 </nav>
+
+<div id="photo-viewer" class="modal hidden" aria-hidden="true" role="dialog" aria-label="Podgląd zdjęcia">
+  <button id="photo-viewer-close" class="modal-close" aria-label="Zamknij">×</button>
+  <img id="photo-viewer-img" alt="Powiększone zdjęcie">
+</div>
+
+<div id="note-modal" class="modal hidden" aria-hidden="true" role="dialog" aria-labelledby="note-modal-title">
+  <form id="note-form" class="modal-card">
+    <h3 id="note-modal-title">Dodaj notatkę</h3>
+    <input id="note-title" type="text" placeholder="Tytuł (opcjonalnie)">
+    <textarea id="note-text" rows="6" placeholder="Treść notatki"></textarea>
+    <div class="row modal-actions">
+      <button type="button" id="note-cancel" class="btn btn-ghost">Anuluj</button>
+      <button type="submit" class="btn btn-primary">Zapisz</button>
+    </div>
+  </form>
+</div>
 
 <div id="toast" class="toast hidden"></div>
 

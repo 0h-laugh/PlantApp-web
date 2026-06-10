@@ -6,7 +6,7 @@ const store = {
   get plants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); },
   set plants(v) {
     try { localStorage.setItem("pa_plants", JSON.stringify(v)); }
-    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub zrób eksport"); }
+    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia albo zsynchronizuj dane z chmurą"); }
     window.dispatchEvent(new CustomEvent("pa:change"));
   },
   get homes() { return JSON.parse(localStorage.getItem("pa_homes") || "[]"); },
@@ -66,6 +66,79 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.add("hidden"), 2600);
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+function deviceId() {
+  let id = localStorage.getItem("pa_device_id");
+  if (!id) { id = "dev_" + uid() + "_" + Date.now().toString(36); localStorage.setItem("pa_device_id", id); }
+  return id;
+}
+function currentJournalAuthor() {
+  const u = window.PA_USER || {};
+  return { userId: u.id || null, userEmail: u.email || null, displayName: u.displayName || u.email || "local", sourceDevice: deviceId() };
+}
+function entryPhotos(entry = {}) {
+  const photos = Array.isArray(entry.photos) ? entry.photos.filter(Boolean) : [];
+  if (entry.photo && !photos.includes(entry.photo)) photos.unshift(entry.photo);
+  return photos;
+}
+function normalizeJournalEntry(entry = {}) {
+  const now = Date.now();
+  const t = entry.t || entry.createdAt || now;
+  const photos = entryPhotos(entry);
+  const author = currentJournalAuthor();
+  return {
+    id: entry.id || "jr_" + uid(),
+    t,
+    type: entry.type || "note",
+    title: entry.title || "",
+    text: entry.text || "",
+    updatedAt: entry.updatedAt || t,
+    updatedBy: entry.updatedBy || author.userId || author.sourceDevice,
+    userId: entry.userId ?? null,
+    userEmail: entry.userEmail ?? null,
+    displayName: entry.displayName || "local",
+    sourceDevice: entry.sourceDevice || author.sourceDevice,
+    ...entry,
+    photos,
+    photo: entry.photo || photos[0],
+  };
+}
+function stampPlantField(plant, field, at = Date.now()) {
+  const author = currentJournalAuthor();
+  plant.fieldClock = plant.fieldClock || {};
+  plant.fieldClock[field] = { updatedAt: at, updatedBy: author.userId || author.sourceDevice };
+}
+function fmtWhen(t) {
+  const diff = Math.round((Date.now() - t) / DAY);
+  if (diff === 0) return "dzisiaj";
+  if (diff === 1) return "wczoraj";
+  if (diff > 1 && diff < 7) return diff + " dni temu";
+  return fmtDate(t);
+}
+function authorLabel(e = {}) { return e.displayName || e.userEmail || "local"; }
+function cloudSettings() { return window.PlantAppCloud || null; }
+async function hasPlantNetAccess() {
+  if (cloudSettings()?.getPlantNetApiKey) return !!(await cloudSettings().getPlantNetApiKey());
+  return !!store.apiKey;
+}
+async function fetchPlantNet(kind, formData) {
+  const cloud = cloudSettings();
+  if (kind === "identify" && cloud?.identifyPlant) return cloud.identifyPlant(formData);
+  if (kind === "disease" && cloud?.identifyDisease) return cloud.identifyDisease(formData);
+  const key = store.apiKey;
+  const endpoint = kind === "disease" ? "diseases/identify" : "identify/all";
+  const extra = kind === "disease" ? "&nb-results=3" : "&lang=pl&nb-results=4";
+  const res = await fetch(`https://my-api.plantnet.org/v2/${endpoint}?api-key=${encodeURIComponent(key)}${extra}`, { method: "POST", body: formData });
+  return { res, data: await res.clone().json().catch(() => null) };
+}
+async function refreshApiKeyField() {
+  const input = $("#api-key");
+  if (!input) return;
+  const key = cloudSettings()?.getPlantNetApiKey ? await cloudSettings().getPlantNetApiKey() : store.apiKey;
+  input.value = key || "";
+  $("#key-status").textContent = key ? "✓ Klucz dostępny dla tego konta." : "Brak klucza — zapisz go po zalogowaniu.";
+  updateKeyWarnings();
+}
+
 
 // ============ MIGRACJA v1.0 → v1.2 (miejsca/pokoje + history → journal) ============
 const DEFAULT_HOME_NAME = "Mój dom";
@@ -109,8 +182,11 @@ function ensureDefaultPlace() {
       delete p.history;
       changed = true;
     }
+    const normalized = (p.journal || []).map(e => normalizeJournalEntry(e));
+    if (JSON.stringify(normalized) !== JSON.stringify(p.journal || [])) { p.journal = normalized; changed = true; }
     if (!p.homeId || !store.homes.some(h => h.id === p.homeId)) { p.homeId = def.homeId; changed = true; }
     if (!p.roomId || !rooms.some(r => r.id === p.roomId && r.homeId === p.homeId)) { p.roomId = def.roomId; changed = true; }
+    if (!p.fieldClock) { ["name", "latin", "photo", "homeId", "roomId", "customInterval"].forEach(f => stampPlantField(p, f, p.updatedAt || p.added || Date.now())); changed = true; }
   });
   if (changed) store.plants = plants;
 })();
@@ -120,11 +196,15 @@ function addJournal(plantId, entry) {
   const plants = store.plants;
   const p = plants.find(x => x.id === plantId);
   if (!p) return false;
+  const now = Date.now();
   p.journal = p.journal || [];
-  p.journal.push({ t: Date.now(), ...entry });
-  p.updatedAt = Date.now();
-  if (entry.type === "water") p.lastWatered = entry.t || Date.now();
-  if (entry.type === "fert") p.lastFertilized = entry.t || Date.now();
+  const author = currentJournalAuthor();
+  const normalized = normalizeJournalEntry({ t: now, updatedAt: now, updatedBy: author.userId || author.sourceDevice, ...author, ...entry });
+  p.journal.push(normalized);
+  p.updatedAt = now;
+  stampPlantField(p, "journal", now);
+  if (entry.type === "water") p.lastWatered = entry.t || now;
+  if (entry.type === "fert") p.lastFertilized = entry.t || now;
   store.plants = plants;
   return true;
 }
@@ -206,19 +286,51 @@ function allInsights(limit = 4) {
 }
 
 // ============ NAWIGACJA ============
-function goto(view) {
-  $$(".view").forEach(v => v.classList.remove("active"));
-  $("#view-" + view).classList.add("active");
-  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === view));
+let currentView = "plants";
+let navIndex = 0;
+const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+function showView(view, direction = "forward") {
+  const from = $("#view-" + currentView);
+  const to = $("#view-" + view);
+  if (!to) return;
+  if (from && from !== to && !reduceMotion) {
+    from.classList.add(direction === "back" ? "view-exit-back" : "view-exit-forward");
+    setTimeout(() => from.classList.remove("view-exit-back", "view-exit-forward"), 260);
+  }
+  $$(".view").forEach(v => v.classList.remove("active", "view-enter-forward", "view-enter-back"));
+  to.classList.add("active");
+  if (!reduceMotion) {
+    to.classList.add(direction === "back" ? "view-enter-back" : "view-enter-forward");
+    setTimeout(() => to.classList.remove("view-enter-forward", "view-enter-back"), 260);
+  }
+  currentView = view;
+  $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === view || (view === "plant-detail" && t.dataset.goto === "plants")));
   window.scrollTo(0, 0);
   if (view === "plants") renderPlants();
   if (view === "doctor") renderDoctorPlantPicker();
   if (view === "scan" || view === "doctor") updateKeyWarnings();
 }
+function goto(view, options = {}) {
+  const state = { view, plantId: options.plantId || null, navIndex: options.replace ? navIndex : navIndex + 1 };
+  if (options.replace || !history.state) history.replaceState(state, "", "#" + view + (state.plantId ? "/" + state.plantId : ""));
+  else { navIndex = state.navIndex; history.pushState(state, "", "#" + view + (state.plantId ? "/" + state.plantId : "")); }
+  showView(view, options.direction || "forward");
+}
+window.addEventListener("popstate", (e) => {
+  const st = e.state || { view: "plants", navIndex: 0 };
+  const direction = (st.navIndex || 0) < navIndex ? "back" : "forward";
+  navIndex = st.navIndex || 0;
+  if (st.view === "plant-detail" && st.plantId) openDetail(st.plantId, { fromHistory: true, direction });
+  else showView(st.view || "plants", direction);
+});
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-goto]");
   if (g) { e.preventDefault(); goto(g.dataset.goto); }
 });
+let swipeStart = null;
+window.addEventListener("pointerdown", e => { if (e.pointerType !== "mouse" && e.clientX < 24) swipeStart = { x: e.clientX, y: e.clientY }; });
+window.addEventListener("pointerup", e => { if (!swipeStart) return; if (e.clientX - swipeStart.x > 80 && Math.abs(e.clientY - swipeStart.y) < 70) history.back(); swipeStart = null; });
+window.addEventListener("pointercancel", () => swipeStart = null);
 
 // ============ PIERŚCIEŃ PODLEWANIA ============
 function ringSVG(plant, size = 54) {
@@ -250,6 +362,29 @@ function filteredPlants() {
 }
 function roomName(id) { return store.rooms.find(r => r.id === id)?.name || DEFAULT_ROOM_NAME; }
 function homeLabel(h) { return h.address ? `${h.name} · ${h.address}` : h.name; }
+function addRoom(homeId, name) {
+  const clean = (name || "").trim();
+  if (!clean) return null;
+  const now = Date.now();
+  const rooms = store.rooms;
+  const room = { id: "room_" + uid(), homeId, name: clean, sortOrder: roomsForHome(homeId).length, createdAt: now, updatedAt: now };
+  store.rooms = [...rooms, room];
+  return room;
+}
+function renameRoom(roomId, name) {
+  const clean = (name || "").trim();
+  if (!clean) return false;
+  store.rooms = store.rooms.map(r => r.id === roomId ? { ...r, name: clean, updatedAt: Date.now() } : r);
+  return true;
+}
+function deleteRoom(roomId) {
+  const fallback = roomsForHome().find(r => r.id !== roomId) || ensureDefaultPlace();
+  const plants = store.plants.map(p => p.roomId === roomId ? { ...p, roomId: fallback.id || fallback.roomId, updatedAt: Date.now() } : p);
+  store.plants = plants;
+  store.rooms = store.rooms.filter(r => r.id !== roomId);
+  if (store.currentRoomId === roomId) store.currentRoomId = "";
+}
+Object.assign(window, { addRoom, renameRoom, deleteRoom });
 function renderPlaceControls() {
   const homeSelect = $("#home-select"), roomChips = $("#room-chips"), hint = $("#place-filter-hint");
   if (!homeSelect || !roomChips) return;
@@ -263,7 +398,10 @@ function renderPlaceControls() {
     + rooms.map(r => `<button class="chip ${r.id === store.currentRoomId ? "active" : ""}" data-room="${esc(r.id)}">${esc(r.name)}</button>`).join("");
   const home = currentHome();
   const count = filteredPlants().length;
-  if (hint) hint.textContent = `${count} ${count === 1 ? "roślina" : count < 5 ? "rośliny" : "roślin"} · ${homeLabel(home)}${store.currentRoomId ? " · " + roomName(store.currentRoomId) : ""}`;
+  if (hint) hint.innerHTML = `<span>${count} ${count === 1 ? "roślina" : count < 5 ? "rośliny" : "roślin"} · ${esc(homeLabel(home))}${store.currentRoomId ? " · " + esc(roomName(store.currentRoomId)) : ""}</span><span class="room-actions"><button class="mini-btn" id="add-room-btn">+ Pokój</button>${store.currentRoomId ? `<button class="mini-btn" id="rename-room-btn">Zmień nazwę</button><button class="mini-btn" id="delete-room-btn">Usuń</button>` : ""}</span>`;
+  $("#add-room-btn")?.addEventListener("click", () => { const name = prompt("Nazwa pokoju:"); const room = addRoom(store.currentHomeId, name); if (room) { store.currentRoomId = room.id; renderPlants(); } });
+  $("#rename-room-btn")?.addEventListener("click", () => { const name = prompt("Nowa nazwa pokoju:", roomName(store.currentRoomId)); if (renameRoom(store.currentRoomId, name)) renderPlants(); });
+  $("#delete-room-btn")?.addEventListener("click", () => { if (confirm("Usunąć pokój? Rośliny trafią do pokoju domyślnego.")) { deleteRoom(store.currentRoomId); renderPlants(); } });
 }
 
 // ============ LISTA ROŚLIN (siatka kafli) ============
@@ -335,10 +473,54 @@ const JOURNAL_META = {
   fert: { ico: "🌿", label: () => "Nawożono" },
   diagnosis: { ico: "🩺", label: e => `Diagnoza: ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
   photo: { ico: "📷", label: () => "Zdjęcie" },
-  note: { ico: "📝", label: e => esc(e.text) },
+  note: { ico: "📝", label: e => esc(e.title || "Notatka") },
 };
+const NOTE_COLLAPSE_LIMIT = 180;
+let noteContext = null;
+let photoViewerOpen = false;
+function renderTimelineEntry(e, i) {
+  e = normalizeJournalEntry(e);
+  const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
+  const photos = entryPhotos(e);
+  const noteText = e.text || "";
+  const longNote = e.type === "note" && noteText.length > NOTE_COLLAPSE_LIMIT;
+  return `<div class="tl-entry">
+    <div class="tl-ico">${m.ico}</div>
+    <div class="tl-body">
+      <div class="tl-label">${m.label(e)}</div>
+      ${e.type === "note" && noteText ? `<div class="tl-note-text ${longNote ? "collapsed" : ""}">${esc(noteText)}</div>` : ""}
+      <div class="tl-date">${esc(authorLabel(e))} · ${fmtWhen(e.t)}${e.updatedAt && e.updatedAt !== e.t ? " · edytowano " + fmtWhen(e.updatedAt) : ""}</div>
+      ${photos.length ? `<div class="tl-photos">${photos.map(photo => `<img class="tl-thumb" src="${photo}" alt="" loading="lazy">`).join("")}</div>` : ""}
+      ${e.type === "note" ? `<div class="tl-note-actions">${longNote ? `<button class="mini-btn tl-more">Pokaż całość</button>` : ""}<button class="mini-btn tl-edit" data-edit="${e.id}">Edytuj</button></div>` : ""}
+    </div>
+    <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
+  </div>`;
+}
+function openPhotoViewer(src) {
+  const modal = $("#photo-viewer"), img = $("#photo-viewer-img");
+  if (!modal || !img || !src) return;
+  img.src = src; modal.classList.remove("hidden"); modal.setAttribute("aria-hidden", "false"); document.body.classList.add("modal-open"); photoViewerOpen = true;
+}
+function closePhotoViewer() {
+  const modal = $("#photo-viewer"), img = $("#photo-viewer-img");
+  if (!modal) return;
+  modal.classList.add("hidden"); modal.setAttribute("aria-hidden", "true"); if (img) img.src = ""; document.body.classList.remove("modal-open"); photoViewerOpen = false;
+}
+function openNoteModal(plantId, entryId = null) {
+  const modal = $("#note-modal"), titleInput = $("#note-title"), textInput = $("#note-text"), heading = $("#note-modal-title");
+  const plant = store.plants.find(p => p.id === plantId);
+  const entry = entryId ? (plant?.journal || []).find(e => e.id === entryId) : null;
+  if (!modal || !titleInput || !textInput) return;
+  noteContext = { plantId, entryId };
+  heading.textContent = entry ? "Edytuj notatkę" : "Dodaj notatkę";
+  titleInput.value = entry?.title || "";
+  textInput.value = entry?.text || "";
+  modal.classList.remove("hidden"); modal.setAttribute("aria-hidden", "false"); document.body.classList.add("modal-open");
+  setTimeout(() => textInput.focus(), 0);
+}
+function closeNoteModal() { const modal = $("#note-modal"); if (modal) { modal.classList.add("hidden"); modal.setAttribute("aria-hidden", "true"); document.body.classList.remove("modal-open"); } noteContext = null; }
 
-function openDetail(id) {
+function openDetail(id, options = {}) {
   const p = store.plants.find(x => x.id === id);
   if (!p) return;
   const care = careFor(p.latin);
@@ -350,7 +532,7 @@ function openDetail(id) {
   // ewolucja: wszystkie zdjęcia w czasie (start + dziennik), chronologicznie
   const evoPhotos = [];
   if (p.photo) evoPhotos.push({ t: p.added, photo: p.photo, tag: "start" });
-  (p.journal || []).filter(e => e.photo).sort((a, b) => a.t - b.t).forEach(e => evoPhotos.push({ t: e.t, photo: e.photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
+  (p.journal || []).filter(e => entryPhotos(e).length).sort((a, b) => a.t - b.t).forEach(e => entryPhotos(e).forEach(photo => evoPhotos.push({ t: e.t, photo, tag: e.type === "diagnosis" ? "🩺" : "" })));
 
   $("#plant-detail-content").innerHTML = `
     <div class="detail-hero">
@@ -358,6 +540,7 @@ function openDetail(id) {
       <div>
         <div class="detail-name">${esc(p.name)}</div>
         <div class="detail-latin">${esc(p.latin || "")}</div>
+        <label class="room-select-label">Pokój <select id="plant-room">${roomsForHome(p.homeId).map(r => `<option value="${esc(r.id)}" ${r.id === p.roomId ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></label>
         <div class="detail-latin">📍 ${esc(homeLabel(store.homes.find(h => h.id === p.homeId) || currentHome()))} · ${esc(roomName(p.roomId))}</div>
         ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px">⚠️ Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px">✓ Bezpieczna dla zwierząt</div>` : ""}
       </div>
@@ -419,18 +602,7 @@ function openDetail(id) {
 
     <div class="card">
       <div class="sec-k">📖 Dziennik (${journal.length})</div>
-      ${journal.length ? `<div class="timeline">${journal.map((e, i) => {
-        const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
-        return `<div class="tl-entry">
-          <div class="tl-ico">${m.ico}</div>
-          <div class="tl-body">
-            <div class="tl-label">${m.label(e)}</div>
-            <div class="tl-date">${fmtDate(e.t)}</div>
-            ${e.photo && e.type !== "photo" ? `<img class="tl-thumb" src="${e.photo}" alt="" loading="lazy">` : ""}
-          </div>
-          <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
-        </div>`;
-      }).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
+      ${journal.length ? `<div class="timeline">${journal.map((e, i) => renderTimelineEntry(e, i)).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
     </div>
 
     <button class="btn btn-danger btn-block" id="delete-plant">Usuń roślinę</button>
@@ -439,20 +611,21 @@ function openDetail(id) {
   $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
   const fertBtn = $("#fert-now");
   if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
-  $("#add-note").onclick = () => {
-    const text = prompt("Notatka (np. „przesadzona do większej doniczki”):");
-    if (text && text.trim()) { addJournal(id, { type: "note", text: text.trim() }); openDetail(id); }
-  };
+  $("#add-note").onclick = () => openNoteModal(id);
   $("#journal-photo-file").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const photo = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
-    addJournal(id, { type: "photo", photo });
+    addJournal(id, { type: "photo", title: "Zdjęcie", photo, photos: [photo] });
     toast("📷 Dodano do dziennika"); openDetail(id);
   });
   $("#diagnose-this").addEventListener("click", () => { doctorPlantId = id; }, { capture: true });
   $("#int-minus").onclick = () => { mutatePlant(id, p => p.customInterval = Math.max(1, currentInterval(p) - 1)); openDetail(id); };
   $("#int-plus").onclick = () => { mutatePlant(id, p => p.customInterval = currentInterval(p) + 1); openDetail(id); };
-  const reset = $("#int-reset"); if (reset) reset.onclick = () => { mutatePlant(id, p => delete p.customInterval); openDetail(id); };
+  const reset = $("#int-reset"); if (reset) reset.onclick = () => { mutatePlant(id, p => { delete p.customInterval; stampPlantField(p, "customInterval"); }); openDetail(id); };
+  $("#plant-room")?.addEventListener("change", e => { mutatePlant(id, p => { p.roomId = e.target.value; stampPlantField(p, "roomId"); }); toast("Zmieniono pokój"); openDetail(id); });
+  $$("#plant-detail-content .detail-photo, #plant-detail-content .evo-item img, #plant-detail-content .tl-thumb").forEach(img => { if (img.tagName === "IMG") img.addEventListener("click", ev => { ev.stopPropagation(); openPhotoViewer(img.currentSrc || img.src); }); });
+  $$("#plant-detail-content .tl-more").forEach(btn => btn.onclick = () => { const text = btn.closest(".tl-body")?.querySelector(".tl-note-text"); if (!text) return; const collapsed = text.classList.toggle("collapsed"); btn.textContent = collapsed ? "Pokaż całość" : "Zwiń"; });
+  $$("#plant-detail-content .tl-edit").forEach(btn => btn.onclick = () => openNoteModal(id, btn.dataset.edit));
   $$("#plant-detail-content .tl-del").forEach(btn => btn.onclick = () => {
     mutatePlant(id, p => {
       const sorted = p.journal.slice().sort((a, b) => b.t - a.t);
@@ -464,11 +637,12 @@ function openDetail(id) {
   $("#delete-plant").onclick = () => {
     if (confirm(`Usunąć „${p.name}" razem z dziennikiem?`)) {
       store.plants = store.plants.filter(x => x.id !== id);
-      window.dispatchEvent(new CustomEvent("pa:delete", { detail: id }));
+      window.dispatchEvent(new CustomEvent("pa:delete", { detail: { id, userId: window.PA_USER?.id || null, homeId: p.homeId || store.currentHomeId } }));
       toast("Usunięto"); goto("plants");
     }
   };
-  goto("plant-detail");
+  if (options.fromHistory) showView("plant-detail", options.direction || "forward");
+  else goto("plant-detail", { plantId: id });
   $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.goto === "plants"));
 }
 function mutatePlant(id, fn) {
@@ -505,7 +679,7 @@ $("#scan-file").addEventListener("change", async (e) => {
   scanBlob = await fileToCompressed(f);
   scanThumb = await blobToDataURL(await fileToCompressed(f, 480, 0.8));
   $("#scan-preview").innerHTML = `<img src="${URL.createObjectURL(scanBlob)}" alt="Podgląd zdjęcia">`;
-  $("#scan-go").disabled = !store.apiKey;
+  hasPlantNetAccess().then(has => { $("#scan-go").disabled = !(has && scanBlob); });
   $("#scan-results").innerHTML = "";
 });
 $("#organ-chips").addEventListener("click", (e) => {
@@ -524,15 +698,14 @@ $("#scan-go").addEventListener("click", async () => {
     const fd = new FormData();
     fd.append("images", scanBlob, "photo.jpg");
     fd.append("organs", organ);
-    const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${encodeURIComponent(store.apiKey)}&lang=pl&nb-results=4`;
-    const res = await fetch(url, { method: "POST", body: fd });
+    const { res, data } = await fetchPlantNet("identify", fd);
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź klucz i Authorized domains w panelu PlantNet.");
     if (res.status === 404) throw new Error("Nie rozpoznano rośliny. Spróbuj wyraźniejszego zdjęcia liścia lub kwiatu.");
     if (res.status === 429) throw new Error("Wyczerpany dzienny limit (500/dzień). Spróbuj jutro.");
     if (!res.ok) throw new Error("Błąd serwera Pl@ntNet (" + res.status + ").");
-    const data = await res.json();
-    bumpUsage("identify", data.remainingIdentificationRequests);
-    renderScanResults(data.results || []);
+    const payload = data || await res.json();
+    bumpUsage("identify", payload.remainingIdentificationRequests);
+    renderScanResults(payload.results || []);
     st.classList.add("hidden");
   } catch (err) {
     st.classList.add("error");
@@ -572,7 +745,12 @@ function addPlant(latin, displayName) {
   const place = ensureDefaultPlace();
   const homeId = store.currentHomeId || place.homeId;
   const roomId = store.currentRoomId || place.roomId;
-  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
+  {
+    const now = Date.now();
+    const plant = { id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: now, updatedAt: now, lastWatered: now, journal: [normalizeJournalEntry({ t: now, type: "added", title: "Dodano do kolekcji", ...currentJournalAuthor() })], fieldClock: {} };
+    ["name", "latin", "photo", "homeId", "roomId", "journal"].forEach(f => stampPlantField(plant, f, now));
+    plants.push(plant);
+  }
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
@@ -609,7 +787,7 @@ $("#doctor-file").addEventListener("change", async (e) => {
   doctorBlob = await fileToCompressed(f);
   doctorThumb = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
   $("#doctor-preview").innerHTML = `<img src="${URL.createObjectURL(doctorBlob)}" alt="Podgląd zdjęcia">`;
-  $("#doctor-go").disabled = !store.apiKey;
+  hasPlantNetAccess().then(has => { $("#doctor-go").disabled = !(has && doctorBlob); });
   $("#doctor-results").innerHTML = "";
 });
 
@@ -623,8 +801,7 @@ $("#doctor-go").addEventListener("click", async () => {
     const fd = new FormData();
     fd.append("images", doctorBlob, "photo.jpg");
     fd.append("organs", "auto");
-    const url = `https://my-api.plantnet.org/v2/diseases/identify?api-key=${encodeURIComponent(store.apiKey)}&nb-results=3`;
-    const res = await fetch(url, { method: "POST", body: fd });
+    const { res, data } = await fetchPlantNet("disease", fd);
     if (res.status === 401 || res.status === 403) throw new Error("Klucz API odrzucony — sprawdź panel PlantNet.");
     if (res.status === 404) throw new Error("AI nie rozpoznało choroby na tym zdjęciu. Spróbuj zbliżenia zmiany — albo trybu „Po objawach”.");
     if (res.status === 429) throw new Error("Limit dzienny wyczerpany. Użyj trybu „Po objawach”.");
@@ -632,9 +809,9 @@ $("#doctor-go").addEventListener("click", async () => {
       let detail = ""; try { detail = (await res.json()).message || ""; } catch {}
       throw new Error("Pl@ntNet odrzucił zapytanie (" + res.status + (detail ? ": " + detail : "") + "). Spróbuj innego zdjęcia (JPG, wyraźne zbliżenie zmiany).");
     }
-    const data = await res.json();
-    bumpUsage("diseases", data.remainingIdentificationRequests);
-    renderDoctorResults(data.results || []);
+    const payload = data || await res.json();
+    bumpUsage("diseases", payload.remainingIdentificationRequests);
+    renderDoctorResults(payload.results || []);
     st.classList.add("hidden");
   } catch (err) {
     st.classList.add("error");
@@ -644,7 +821,7 @@ $("#doctor-go").addEventListener("click", async () => {
 
 function saveDiagnosis(name, score, src) {
   if (!doctorPlantId) { toast("Wybierz roślinę u góry, żeby zapisać do dziennika"); return false; }
-  const ok = addJournal(doctorPlantId, { type: "diagnosis", name, score, src, photo: src === "ai" ? doctorThumb : undefined });
+  const ok = addJournal(doctorPlantId, { type: "diagnosis", name, score, src, photo: src === "ai" ? doctorThumb : undefined, photos: src === "ai" && doctorThumb ? [doctorThumb] : [] });
   if (ok) {
     const p = store.plants.find(x => x.id === doctorPlantId);
     toast(`🩺 Zapisano w dzienniku: ${p.name}`);
@@ -696,43 +873,22 @@ function renderSymptoms() {
 }
 
 // ============ USTAWIENIA ============
-function updateKeyWarnings() {
-  const has = !!store.apiKey;
+async function updateKeyWarnings() {
+  const has = await hasPlantNetAccess();
   $("#scan-keywarn").classList.toggle("hidden", has);
   $("#doctor-keywarn").classList.toggle("hidden", has);
   $("#scan-go").disabled = !(has && scanBlob);
   $("#doctor-go").disabled = !(has && doctorBlob);
 }
-$("#save-key").addEventListener("click", () => {
+$("#save-key").addEventListener("click", async () => {
   const v = $("#api-key").value.trim();
-  store.apiKey = v;
-  $("#key-status").textContent = v ? "✓ Klucz zapisany lokalnie." : "Klucz usunięty.";
+  if (cloudSettings()?.savePlantNetApiKey) await cloudSettings().savePlantNetApiKey(v);
+  else store.apiKey = v;
+  $("#key-status").textContent = v ? "✓ Klucz zapisany w ustawieniach chmurowych." : "Klucz usunięty.";
   updateKeyWarnings();
   toast(v ? "Klucz zapisany" : "Klucz usunięty");
 });
 
-$("#export-btn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ plants: store.plants, homes: store.homes, rooms: store.rooms, currentHomeId: store.currentHomeId, currentRoomId: store.currentRoomId, exported: new Date().toISOString(), version: "1.2" }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "plantapp-backup-" + new Date().toISOString().slice(0, 10) + ".json";
-  a.click();
-});
-$("#import-file").addEventListener("change", async (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  try {
-    const data = JSON.parse(await f.text());
-    if (!Array.isArray(data.plants)) throw 0;
-    if (Array.isArray(data.homes)) store.homes = data.homes;
-    if (Array.isArray(data.rooms)) store.rooms = data.rooms;
-    if (data.currentHomeId) store.currentHomeId = data.currentHomeId;
-    if (data.currentRoomId) store.currentRoomId = data.currentRoomId;
-    store.plants = data.plants;
-    ensureDefaultPlace();
-    toast("Zaimportowano " + data.plants.length + " roślin");
-    goto("plants");
-  } catch { toast("Nieprawidłowy plik kopii"); }
-});
 
 // ============ POWIADOMIENIA ============
 $("#notif-btn").addEventListener("click", async () => {
@@ -764,7 +920,24 @@ function init() {
     if (sessionStorage.getItem("pa_intro")) intro.classList.add("skip");
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
-  $("#api-key").value = store.apiKey;
+  refreshApiKeyField();
+  window.addEventListener("pa:settings", refreshApiKeyField);
+  window.addEventListener("pa:user", refreshApiKeyField);
+  $("#photo-viewer-close")?.addEventListener("click", closePhotoViewer);
+  $("#photo-viewer")?.addEventListener("click", e => { if (e.target.id === "photo-viewer") closePhotoViewer(); });
+  $("#note-cancel")?.addEventListener("click", closeNoteModal);
+  $("#note-form")?.addEventListener("submit", e => {
+    e.preventDefault();
+    if (!noteContext) return;
+    const title = $("#note-title").value.trim();
+    const text = $("#note-text").value.trim();
+    if (!title && !text) { toast("Notatka jest pusta"); return; }
+    if (noteContext.entryId) mutatePlant(noteContext.plantId, p => { const entry = (p.journal || []).find(x => x.id === noteContext.entryId); if (entry) Object.assign(entry, { title, text, updatedAt: Date.now(), updatedBy: currentJournalAuthor().userId || currentJournalAuthor().sourceDevice }); });
+    else addJournal(noteContext.plantId, { type: "note", title, text });
+    const plantId = noteContext.plantId; closeNoteModal(); openDetail(plantId, { fromHistory: true });
+  });
+  window.addEventListener("keydown", e => { if (e.key === "Escape") { if (photoViewerOpen) closePhotoViewer(); else closeNoteModal(); } });
+  if (!history.state) history.replaceState({ view: "plants", navIndex: 0 }, "", "#plants");
   $("#home-select")?.addEventListener("change", (e) => { store.currentHomeId = e.target.value; store.currentRoomId = ""; renderPlants(); });
   $("#room-chips")?.addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (!c) return; store.currentRoomId = c.dataset.room || ""; renderPlants(); });
   renderSymptoms();

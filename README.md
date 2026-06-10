@@ -6,9 +6,9 @@ plan podlewania i nawożenia, dziennik z ewolucją w czasie, konto + synchroniza
 ## Architektura
 - **Frontend:** czysty HTML/CSS/JS, PWA (offline poza AI/sync), hosting: GitHub Pages
 - **AI:** Pl@ntNet API (darmowe 500 zapytań/dzień, licznik na żywo w apce)
-- **Backend:** Supabase free — auth (e-mail+hasło) + tabela `plants` (jsonb) z RLS per użytkownik
-- **Sync:** offline-first; localStorage to źródło prawdy na urządzeniu, scalanie per-roślina po `updated_at`
-  (last-write-wins), usunięcia przez tombstones; push z debounce 4 s, pull przy starcie/powrocie do apki/online
+- **Backend:** Supabase free — auth (e-mail+hasło), domy/pokoje, zaproszenia domowników, ustawienia użytkownika i RLS per dom/użytkownik.
+- **Sync:** offline-first; localStorage działa jako cache i bufor zmian, a Supabase scala dane między urządzeniami.
+  Synchronizacja łączy dzienniki po identyfikatorach wpisów, zachowuje tombstones usuniętych roślin oraz wspiera pola `home_id`/`room_id`.
 
 ## Uruchomienie backendu (raz)
 ```bash
@@ -30,4 +30,11 @@ Dashboard → Restore (działa do 90 dni pauzy).
 ## Funkcje
 Skanuj (gatunek ze zdjęcia) · Doktor (choroba ze zdjęcia AI / objawy offline, zapis do dziennika konkretnej rośliny)
 · pierścień podlewania lato/zima · nawożenie co 30 dni w sezonie · dziennik + ewolucja zdjęciowa
-· licznik limitu AI na żywo · konto i sync multi-device · eksport/import JSON
+· licznik limitu AI na żywo · konto i sync multi-device · pokoje i udostępnianie domu · notatki i lightbox zdjęć
+
+
+## Model danych Supabase
+- `homes`, `rooms`, `home_members`, `home_invites` — domy, pokoje i współdzielenie przez zaproszenia.
+- `plants` — bieżący snapshot rośliny z `home_id`, `room_id`, `data jsonb` i tombstones dla usunięć.
+- `plant_journal_entries`, `plant_photos` — przygotowane tabele znormalizowane dla konfliktów dziennika i zdjęć; klient zachowuje kompatybilny snapshot JSON.
+- `user_settings` — ustawienia per użytkownik, w tym klucz Pl@ntNet; opcjonalny `PLANTNET_EDGE_FUNCTION_URL` może przenieść wywołania API za Edge Function.
