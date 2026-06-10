@@ -157,6 +157,25 @@
     </div>
 
     <div class="card">
+      <h3>🤖 Asystent AI</h3>
+      <p class="muted">Asystent rozmawia o Twoich roślinach na podstawie ich dziennika. Działa z darmowymi dostawcami: załóż konto na <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai</a> (darmowe modele) lub <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com</a> (darmowy limit), skopiuj klucz i wklej tutaj. Klucz jest zapisywany w Twojej chmurze Supabase.</p>
+      <div class="row">
+        <select id="assistant-provider" class="room-select"></select>
+      </div>
+      <div class="row" id="assistant-custom-row" hidden>
+        <input type="text" id="assistant-baseurl" placeholder="https://adres-api/v1" autocomplete="off">
+      </div>
+      <div class="row">
+        <input type="password" id="assistant-key" placeholder="Wklej klucz API…" autocomplete="off">
+        <input type="text" id="assistant-model" placeholder="Model (opcjonalnie)" autocomplete="off">
+      </div>
+      <div class="row">
+        <button id="assistant-save" class="btn btn-primary">Zapisz</button>
+      </div>
+      <div id="assistant-config-status" class="muted small"></div>
+    </div>
+
+    <div class="card">
       <h3>Przypomnienia</h3>
       <p class="muted">Powiadomienie, gdy któraś roślina czeka na podlanie (działa gdy aplikacja jest zainstalowana).</p>
       <button id="notif-btn" class="btn btn-ghost">🔔 Włącz powiadomienia</button>

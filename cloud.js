@@ -10,7 +10,7 @@
 
   let user = null;
   let sb = null;
-  let settings = { apiKey: "" };
+  let settings = { apiKey: "", assistant: null };
   let settingsLoaded = false;
   let settingsError = "";
   const hasPlantNetProxy = !!cfg.PLANTNET_EDGE_FUNCTION_URL;
@@ -34,7 +34,7 @@
     settingsError = "";
     emitSettings();
     if (!sb || !user) {
-      settings = { apiKey: "" };
+      settings = { apiKey: "", assistant: null };
       settingsLoaded = true;
       emitSettings();
       return settings;
@@ -46,7 +46,7 @@
       emitSettings();
       throw error;
     }
-    settings = { apiKey: data?.data?.apiKey || "" };
+    settings = { apiKey: data?.data?.apiKey || "", assistant: data?.data?.assistant || null };
     settingsLoaded = true;
     emitSettings();
     return settings;
@@ -99,6 +99,11 @@
       return settings.apiKey;
     },
     savePlantNetApiKey: async (apiKey) => saveSettings({ apiKey }),
+    getAssistantConfig: async () => {
+      if (!settingsLoaded) await loadSettings();
+      return settings.assistant || null;
+    },
+    saveAssistantConfig: async (assistant) => saveSettings({ assistant }),
     identifyPlant: (formData, { organ = "auto", lang = "pl", nbResults = 4 } = {}) =>
       plantNetFetch("identify/all", formData, { lang, "nb-results": nbResults, organs: organ }),
     identifyDisease: (formData, { nbResults = 3 } = {}) =>
@@ -542,7 +547,7 @@
   sb.auth.onAuthStateChange((_event, session) => {
     user = session?.user || null;
     exposeCurrentUser();
-    settings = { apiKey: "" };
+    settings = { apiKey: "", assistant: null };
     settingsLoaded = false;
     settingsError = "";
     emitSettings();

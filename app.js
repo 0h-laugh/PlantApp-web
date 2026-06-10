@@ -353,6 +353,54 @@ function allInsights(limit = 4) {
 
 // ============ AI ASYSTENT ROŚLINY ============
 const ASSISTANT_STORAGE_KEY = "pa_assistant_messages";
+const ASSISTANT_SYSTEM_PROMPT = `Jesteś przyjaznym asystentem pielęgnacji roślin domowych w aplikacji PlantApp.
+Odpowiadasz po polsku, zwięźle i praktycznie. Otrzymujesz kontekst JSON konkretnej rośliny:
+gatunek, dziennik (podlewania, nawożenia, diagnozy, notatki), harmonogram i wskazówki pielęgnacyjne.
+Opieraj porady na tym kontekście — odwołuj się do konkretnych wpisów z dziennika, gdy to pomaga.
+Możesz też luźno rozmawiać o roślinie. Nie stawiasz diagnoz medycznych ani laboratoryjnych;
+przy poważnych objawach sugeruj tryb "Doktor" w aplikacji. Nie używaj formatowania Markdown —
+zwykły tekst, maksymalnie kilka zdań, chyba że użytkownik prosi o więcej.`;
+// Dostawcy zgodni z API OpenAI (chat/completions), wołani wprost z przeglądarki.
+const ASSISTANT_PROVIDERS = {
+  openrouter: { label: "OpenRouter (darmowe modele)", baseUrl: "https://openrouter.ai/api/v1", model: "meta-llama/llama-3.3-70b-instruct:free", keyUrl: "https://openrouter.ai/keys" },
+  groq: { label: "Groq (darmowy limit)", baseUrl: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile", keyUrl: "https://console.groq.com/keys" },
+  custom: { label: "Własny adres (OpenAI-compatible)", baseUrl: "", model: "", keyUrl: "" },
+};
+function resolveAssistantConfig(cfg) {
+  if (!cfg) return null;
+  const preset = ASSISTANT_PROVIDERS[cfg.provider] || ASSISTANT_PROVIDERS.custom;
+  const baseUrl = (cfg.baseUrl || preset.baseUrl || "").replace(/\/+$/, "");
+  const model = cfg.model || preset.model;
+  if (!baseUrl || !model || !cfg.apiKey) return null;
+  return { baseUrl, model, apiKey: cfg.apiKey };
+}
+async function callAssistantLLM(cfg, context, history) {
+  const messages = [
+    { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
+    { role: "user", content: `Kontekst rośliny (JSON):\n${JSON.stringify(context)}` },
+    ...history,
+  ];
+  const res = await fetch(`${cfg.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${cfg.apiKey}`,
+      "HTTP-Referer": location.origin,
+      "X-Title": "PlantApp",
+    },
+    body: JSON.stringify({ model: cfg.model, max_tokens: 1024, messages }),
+  });
+  if (!res.ok) {
+    let detail = ""; try { detail = (await res.json())?.error?.message || ""; } catch {}
+    if (res.status === 401 || res.status === 403) throw new Error("Klucz API asystenta odrzucony — sprawdź go w Ustawieniach → Asystent AI.");
+    if (res.status === 429) throw new Error("Limit darmowych zapytań wyczerpany — spróbuj za chwilę lub zmień model/dostawcę.");
+    throw new Error(`Błąd dostawcy AI (${res.status}${detail ? ": " + detail : ""}).`);
+  }
+  const data = await res.json();
+  const reply = data?.choices?.[0]?.message?.content;
+  if (!reply) throw new Error("Dostawca AI nie zwrócił odpowiedzi.");
+  return String(reply).trim();
+}
 let activeAssistantPlantId = null;
 let assistantSending = false;
 let assistantCloudWarn = "";
@@ -510,17 +558,24 @@ async function sendAssistantMessage(plantId, message) {
   renderAssistantMessages(plantId);
   await saveAssistantMessageToSupabase(plantId, userMessage, context);
   try {
-    const sb = getAssistantClient();
-    if (!sb) throw new Error("Backend Supabase nie jest skonfigurowany.");
     const history = assistantMessages(plantId).slice(-10).map(m => ({ role: m.role, content: m.content }));
-    const { data, error } = await sb.functions.invoke("plant-assistant", { body: { plantId, message, context, history } });
-    if (error) throw error;
-    const reply = data?.reply || data?.message || data?.content;
-    if (!reply) throw new Error("Edge Function plant-assistant nie zwróciła odpowiedzi.");
+    const cfg = resolveAssistantConfig(await window.PlantAppCloud?.getAssistantConfig?.());
+    let reply;
+    if (cfg) {
+      reply = await callAssistantLLM(cfg, context, history);
+    } else {
+      // brak konfiguracji w aplikacji — spróbuj opcjonalnej Edge Function
+      const sb = getAssistantClient();
+      if (!sb) throw new Error("Skonfiguruj asystenta w Ustawieniach → Asystent AI (darmowy klucz OpenRouter lub Groq).");
+      const { data, error } = await sb.functions.invoke("plant-assistant", { body: { plantId, message, context, history } });
+      if (error) throw new Error("Skonfiguruj asystenta w Ustawieniach → Asystent AI (darmowy klucz OpenRouter lub Groq).");
+      reply = data?.reply || data?.message || data?.content;
+      if (!reply) throw new Error("Backend AI nie zwrócił odpowiedzi.");
+    }
     const assistantMessage = addAssistantMessage(plantId, "assistant", reply);
     await saveAssistantMessageToSupabase(plantId, assistantMessage, context);
   } catch (err) {
-    const fallback = "Nie mogę teraz połączyć się z backendem AI. Sprawdź Supabase Edge Function `plant-assistant`; klucz modelu powinien być tylko po stronie backendu, nie w przeglądarce.";
+    const fallback = "Nie mogę teraz odpowiedzieć. Wejdź w Ustawienia → Asystent AI i dodaj darmowy klucz (OpenRouter lub Groq).";
     addAssistantMessage(plantId, "assistant", fallback);
     assistantCloudWarn = err.message || fallback;
   } finally {
@@ -1309,6 +1364,62 @@ $("#save-key").addEventListener("click", async () => {
 });
 window.addEventListener("pa:settings", refreshApiKeyField);
 
+// ---- konfiguracja asystenta AI (Ustawienia) ----
+function fillAssistantProviderSelect() {
+  const sel = $("#assistant-provider");
+  if (!sel || sel.options.length) return;
+  sel.innerHTML = Object.entries(ASSISTANT_PROVIDERS)
+    .map(([id, p]) => `<option value="${id}">${esc(p.label)}</option>`).join("");
+}
+function syncAssistantProviderUI() {
+  const sel = $("#assistant-provider");
+  const preset = ASSISTANT_PROVIDERS[sel?.value] || ASSISTANT_PROVIDERS.custom;
+  $("#assistant-custom-row").hidden = sel?.value !== "custom";
+  $("#assistant-model").placeholder = preset.model ? `Model (domyślnie: ${preset.model})` : "Model (np. llama-3.3-70b)";
+}
+async function refreshAssistantConfigCard() {
+  fillAssistantProviderSelect();
+  const status = $("#assistant-config-status");
+  const cloud = cloudSettings();
+  if (!cloud) { status.textContent = "Ładuję połączenie z chmurą…"; return; }
+  if (!cloud.isSettingsLoaded?.()) { status.textContent = "Pobieram konfigurację z chmury…"; return; }
+  const cfg = await cloud.getAssistantConfig?.();
+  if (cfg) {
+    $("#assistant-provider").value = ASSISTANT_PROVIDERS[cfg.provider] ? cfg.provider : "custom";
+    $("#assistant-key").value = cfg.apiKey || "";
+    $("#assistant-model").value = cfg.model || "";
+    $("#assistant-baseurl").value = cfg.baseUrl || "";
+    status.textContent = resolveAssistantConfig(cfg) ? "✓ Asystent skonfigurowany — gotowy do rozmowy." : "Konfiguracja niepełna — uzupełnij klucz.";
+  } else {
+    status.textContent = "Brak konfiguracji — wybierz dostawcę i wklej darmowy klucz.";
+  }
+  syncAssistantProviderUI();
+}
+$("#assistant-provider")?.addEventListener("change", syncAssistantProviderUI);
+$("#assistant-save")?.addEventListener("click", async () => {
+  const cloud = cloudSettings();
+  const status = $("#assistant-config-status");
+  if (!cloud?.saveAssistantConfig) { status.textContent = "Chmura nie jest jeszcze gotowa — zaloguj się."; return; }
+  const cfg = {
+    provider: $("#assistant-provider").value,
+    apiKey: $("#assistant-key").value.trim(),
+    model: $("#assistant-model").value.trim(),
+    baseUrl: $("#assistant-baseurl").value.trim(),
+  };
+  $("#assistant-save").disabled = true;
+  status.textContent = "Zapisuję w chmurze…";
+  try {
+    await cloud.saveAssistantConfig(cfg);
+    status.textContent = resolveAssistantConfig(cfg) ? "✓ Zapisano — asystent gotowy." : "Zapisano, ale konfiguracja jest niepełna (brak klucza?).";
+    toast("Zapisano konfigurację asystenta");
+  } catch (err) {
+    status.textContent = err.message || "Nie udało się zapisać.";
+  } finally {
+    $("#assistant-save").disabled = false;
+  }
+});
+window.addEventListener("pa:settings", refreshAssistantConfigCard);
+
 // ============ POWIADOMIENIA ============
 $("#notif-btn").addEventListener("click", async () => {
   if (!("Notification" in window)) { $("#notif-status").textContent = "Ta przeglądarka nie obsługuje powiadomień."; return; }
@@ -1380,6 +1491,7 @@ function init() {
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
   refreshApiKeyField();
+  refreshAssistantConfigCard();
   $("#home-select")?.addEventListener("change", (e) => {
     const v = e.target.value;
     if (v === "__add_home") {
