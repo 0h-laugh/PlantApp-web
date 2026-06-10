@@ -49,6 +49,20 @@ function renderUsage() {
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const uid = () => Math.random().toString(36).slice(2, 10);
+const deviceId = (() => {
+  let id = localStorage.getItem("pa_device_id");
+  if (!id) {
+    id = (globalThis.crypto?.randomUUID?.() || `dev_${uid()}_${Date.now().toString(36)}`);
+    localStorage.setItem("pa_device_id", id);
+  }
+  return id;
+})();
+const TRACKED_PLANT_FIELDS = ["name", "latin", "photo", "lastWatered", "lastFertilized", "customInterval"];
+function changeStamp(t = Date.now()) { return { updatedAt: t, updatedBy: deviceId }; }
+function stampPlantFields(p, fields, t = Date.now()) {
+  p.fieldClock = { ...(p.fieldClock || {}) };
+  fields.forEach(field => { p.fieldClock[field] = changeStamp(t); });
+}
 const DAY = 86400000;
 
 function isSummer() { const m = new Date().getMonth() + 1; return m >= 4 && m <= 9; }
@@ -64,12 +78,23 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;
   const plants = store.plants;
   let changed = false;
   plants.forEach(p => {
+    const baseT = p.updatedAt || p.added || Date.now();
     if (!p.journal) {
-      p.journal = [{ t: p.added || Date.now(), type: "added" }];
-      (p.history || []).forEach(t => p.journal.push({ t, type: "water" }));
+      p.journal = [{ id: `je_${p.id}_${p.added || baseT}_0`, t: p.added || Date.now(), type: "added", updatedAt: baseT, updatedBy: deviceId }];
+      (p.history || []).forEach((t, i) => p.journal.push({ id: `je_${p.id}_${t}_${i + 1}`, t, type: "water", updatedAt: t, updatedBy: deviceId }));
       delete p.history;
       changed = true;
     }
+    p.journal = (p.journal || []).map((entry, i) => {
+      if (entry.id && entry.updatedAt && entry.updatedBy) return entry;
+      changed = true;
+      const t = entry.t || baseT;
+      return { id: entry.id || `je_${p.id}_${t}_${i}`, updatedAt: entry.updatedAt || t, updatedBy: entry.updatedBy || deviceId, ...entry };
+    });
+    p.fieldClock = { ...(p.fieldClock || {}) };
+    TRACKED_PLANT_FIELDS.forEach(field => {
+      if (p[field] !== undefined && !p.fieldClock[field]) { p.fieldClock[field] = changeStamp(baseT); changed = true; }
+    });
   });
   if (changed) store.plants = plants;
 })();
@@ -79,11 +104,15 @@ function addJournal(plantId, entry) {
   const plants = store.plants;
   const p = plants.find(x => x.id === plantId);
   if (!p) return false;
+  const now = Date.now();
   p.journal = p.journal || [];
-  p.journal.push({ t: Date.now(), ...entry });
-  p.updatedAt = Date.now();
-  if (entry.type === "water") p.lastWatered = entry.t || Date.now();
-  if (entry.type === "fert") p.lastFertilized = entry.t || Date.now();
+  const journalEntry = { id: entry.id || `je_${plantId}_${now}_${uid()}`, t: now, updatedAt: now, updatedBy: deviceId, ...entry };
+  p.journal.push(journalEntry);
+  p.updatedAt = now;
+  const changedFields = [];
+  if (entry.type === "water") { p.lastWatered = entry.t || now; changedFields.push("lastWatered"); }
+  if (entry.type === "fert") { p.lastFertilized = entry.t || now; changedFields.push("lastFertilized"); }
+  if (changedFields.length) stampPlantFields(p, changedFields, now);
   store.plants = plants;
   return true;
 }
@@ -401,7 +430,15 @@ function openDetail(id) {
 function mutatePlant(id, fn) {
   const plants = store.plants;
   const p = plants.find(x => x.id === id);
-  if (p) { fn(p); p.updatedAt = Date.now(); store.plants = plants; }
+  if (!p) return;
+  const before = {};
+  TRACKED_PLANT_FIELDS.forEach(field => { before[field] = p[field]; });
+  fn(p);
+  const now = Date.now();
+  const changedFields = TRACKED_PLANT_FIELDS.filter(field => before[field] !== p[field]);
+  if (changedFields.length) stampPlantFields(p, changedFields, now);
+  p.updatedAt = now;
+  store.plants = plants;
 }
 
 // ============ ZDJĘCIA ============
@@ -496,7 +533,11 @@ function renderScanResults(results) {
 function addPlant(latin, displayName) {
   const name = prompt("Nazwa rośliny (np. „Monstera w salonie”):", displayName) || displayName;
   const plants = store.plants;
-  plants.push({ id: uid(), name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
+  const now = Date.now();
+  const id = uid();
+  const plant = { id, name, latin, photo: scanThumb, added: now, updatedAt: now, lastWatered: now, journal: [{ id: `je_${id}_${now}_0`, t: now, type: "added", updatedAt: now, updatedBy: deviceId }] };
+  stampPlantFields(plant, ["name", "latin", "photo", "lastWatered"], now);
+  plants.push(plant);
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;

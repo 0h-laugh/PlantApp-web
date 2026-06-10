@@ -18,10 +18,51 @@ const SQL = `
 create table if not exists public.plants (
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
-  data jsonb not null,
+  data jsonb not null default '{}'::jsonb,
+  name text,
+  latin text,
+  added timestamptz,
+  last_watered timestamptz,
+  last_fertilized timestamptz,
+  custom_interval integer,
+  field_clock jsonb not null default '{}'::jsonb,
+  deleted_at timestamptz,
   updated_at timestamptz not null default now()
 );
+alter table public.plants add column if not exists data jsonb not null default '{}'::jsonb;
+alter table public.plants add column if not exists name text;
+alter table public.plants add column if not exists latin text;
+alter table public.plants add column if not exists added timestamptz;
+alter table public.plants add column if not exists last_watered timestamptz;
+alter table public.plants add column if not exists last_fertilized timestamptz;
+alter table public.plants add column if not exists custom_interval integer;
+alter table public.plants add column if not exists field_clock jsonb not null default '{}'::jsonb;
+alter table public.plants add column if not exists deleted_at timestamptz;
+alter table public.plants add column if not exists updated_at timestamptz not null default now();
+
+create table if not exists public.plant_journal_entries (
+  id text primary key,
+  plant_id text not null references public.plants(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  data jsonb not null default '{}'::jsonb,
+  entry_time timestamptz not null,
+  deleted_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.plant_photos (
+  id text primary key,
+  plant_id text not null references public.plants(id) on delete cascade,
+  journal_entry_id text references public.plant_journal_entries(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  kind text not null check (kind in ('cover', 'journal')),
+  photo text not null,
+  updated_at timestamptz not null default now()
+);
+
 alter table public.plants enable row level security;
+alter table public.plant_journal_entries enable row level security;
+alter table public.plant_photos enable row level security;
 
 drop policy if exists "plants_select_own" on public.plants;
 create policy "plants_select_own" on public.plants for select using (auth.uid() = user_id);
@@ -32,7 +73,27 @@ create policy "plants_update_own" on public.plants for update using (auth.uid() 
 drop policy if exists "plants_delete_own" on public.plants;
 create policy "plants_delete_own" on public.plants for delete using (auth.uid() = user_id);
 
+drop policy if exists "plant_journal_entries_select_own" on public.plant_journal_entries;
+create policy "plant_journal_entries_select_own" on public.plant_journal_entries for select using (auth.uid() = user_id);
+drop policy if exists "plant_journal_entries_insert_own" on public.plant_journal_entries;
+create policy "plant_journal_entries_insert_own" on public.plant_journal_entries for insert with check (auth.uid() = user_id);
+drop policy if exists "plant_journal_entries_update_own" on public.plant_journal_entries;
+create policy "plant_journal_entries_update_own" on public.plant_journal_entries for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "plant_journal_entries_delete_own" on public.plant_journal_entries;
+create policy "plant_journal_entries_delete_own" on public.plant_journal_entries for delete using (auth.uid() = user_id);
+
+drop policy if exists "plant_photos_select_own" on public.plant_photos;
+create policy "plant_photos_select_own" on public.plant_photos for select using (auth.uid() = user_id);
+drop policy if exists "plant_photos_insert_own" on public.plant_photos;
+create policy "plant_photos_insert_own" on public.plant_photos for insert with check (auth.uid() = user_id);
+drop policy if exists "plant_photos_update_own" on public.plant_photos;
+create policy "plant_photos_update_own" on public.plant_photos for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+drop policy if exists "plant_photos_delete_own" on public.plant_photos;
+create policy "plant_photos_delete_own" on public.plant_photos for delete using (auth.uid() = user_id);
+
 create index if not exists plants_user_idx on public.plants(user_id);
+create index if not exists plant_journal_entries_user_plant_idx on public.plant_journal_entries(user_id, plant_id);
+create index if not exists plant_photos_user_plant_idx on public.plant_photos(user_id, plant_id);
 `;
 
 async function api(path, opts = {}) {
@@ -85,7 +146,7 @@ const genPass = () => "Pa_" + [...crypto.getRandomValues(new Uint8Array(18))].ma
 
   console.log("→ Zakładam schemat + RLS…");
   await api(`/v1/projects/${ref}/database/query`, { method: "POST", body: JSON.stringify({ query: SQL }) });
-  console.log("  ✓ Tabela public.plants z politykami RLS");
+  console.log("  ✓ Tabele public.plants / plant_journal_entries / plant_photos z politykami RLS");
 
   console.log("→ Włączam auto-potwierdzanie e-maili (bez klikania w linki)…");
   await api(`/v1/projects/${ref}/config/auth`, { method: "PATCH", body: JSON.stringify({ mailer_autoconfirm: true }) });

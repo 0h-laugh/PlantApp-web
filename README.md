@@ -6,9 +6,9 @@ plan podlewania i nawożenia, dziennik z ewolucją w czasie, konto + synchroniza
 ## Architektura
 - **Frontend:** czysty HTML/CSS/JS, PWA (offline poza AI/sync), hosting: GitHub Pages
 - **AI:** Pl@ntNet API (darmowe 500 zapytań/dzień, licznik na żywo w apce)
-- **Backend:** Supabase free — auth (e-mail+hasło) + tabela `plants` (jsonb) z RLS per użytkownik
-- **Sync:** offline-first; localStorage to źródło prawdy na urządzeniu, scalanie per-roślina po `updated_at`
-  (last-write-wins), usunięcia przez tombstones; push z debounce 4 s, pull przy starcie/powrocie do apki/online
+- **Backend:** Supabase free — auth (e-mail+hasło) + tabele `plants`, `plant_journal_entries` i `plant_photos` z RLS per użytkownik
+- **Sync:** offline-first; localStorage to źródło prawdy na urządzeniu, scalanie pól metadanych po `fieldClock[field].updatedAt`,
+  a dziennika addytywnie po `journalEntry.id`; usunięcia roślin przez tombstones; push z debounce 4 s, pull przy starcie/powrocie do apki/online
 
 ## Uruchomienie backendu (raz)
 ```bash
