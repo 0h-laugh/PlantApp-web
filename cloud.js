@@ -307,7 +307,8 @@
     } else {
       cardBody.innerHTML = `
         <p class="muted">Zalogowano: <strong>${user.email}</strong></p>
-        <div id="sync-status" class="muted small">—</div>
+        <p class="muted small">Supabase jest źródłem synchronizacji. Dane w tej przeglądarce są cache’em offline i buforem zmian wykonanych bez sieci.</p>
+        <div id="sync-status" class="muted small">Status synchronizacji: oczekiwanie…</div>
         <div class="row">
           <button class="btn btn-primary" id="cl-sync">🔄 Synchronizuj teraz</button>
           <button class="btn btn-ghost" id="cl-logout">Wyloguj</button>
