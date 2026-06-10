@@ -48,7 +48,7 @@
       <button class="btn btn-ghost btn-block" id="au-signup">Załóż konto</button>
       <div id="au-msg" class="auth-msg"></div>
       <button class="auth-skip" id="au-skip">Kontynuuj bez konta →</button>
-      <p class="auth-note">Bez konta wszystko działa lokalnie na tym telefonie.<br>Konto dodaje kopię w chmurze i synchronizację urządzeń.</p>
+      <p class="auth-note">Bez konta dane zostają tylko w tej przeglądarce.<br>Konto zapisuje rośliny w Supabase i synchronizuje je między urządzeniami.</p>
     </div>
   </div>
 </section>
@@ -141,7 +141,7 @@
 
     <div class="card">
       <h3>Klucz API Pl@ntNet</h3>
-      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz zostaje tylko w Twoim telefonie.</p>
+      <p class="muted">Darmowy (500 rozpoznań dziennie). Załóż konto na <a href="https://my.plantnet.org" target="_blank" rel="noopener">my.plantnet.org</a>, skopiuj klucz i wklej tutaj. Klucz jest zapisywany tylko w tej przeglądarce.</p>
       <div class="row">
         <input type="password" id="api-key" placeholder="Wklej klucz API…" autocomplete="off">
         <button id="save-key" class="btn btn-primary">Zapisz</button>
@@ -166,14 +166,6 @@
       <div id="usage-card-body"></div>
     </div>
 
-    <div class="card">
-      <h3>Twoje dane</h3>
-      <p class="muted">Wszystko trzymane lokalnie na telefonie. Zrób kopię przed zmianą urządzenia.</p>
-      <div class="row">
-        <button id="export-btn" class="btn btn-ghost">⬇️ Eksport JSON</button>
-        <label class="btn btn-ghost" for="import-file">⬆️ Import<input type="file" id="import-file" accept=".json" hidden></label>
-      </div>
-    </div>
 
     <div class="card">
       <h3>O aplikacji</h3>

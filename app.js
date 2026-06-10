@@ -6,7 +6,7 @@ const store = {
   get plants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); },
   set plants(v) {
     try { localStorage.setItem("pa_plants", JSON.stringify(v)); }
-    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub zrób eksport"); }
+    catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub włącz synchronizację"); }
     window.dispatchEvent(new CustomEvent("pa:change"));
   },
   get apiKey() { return localStorage.getItem("pa_apikey") || ""; },
@@ -635,23 +635,6 @@ $("#save-key").addEventListener("click", () => {
   toast(v ? "Klucz zapisany" : "Klucz usunięty");
 });
 
-$("#export-btn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ plants: store.plants, exported: new Date().toISOString(), version: "1.1" }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "plantapp-backup-" + new Date().toISOString().slice(0, 10) + ".json";
-  a.click();
-});
-$("#import-file").addEventListener("change", async (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  try {
-    const data = JSON.parse(await f.text());
-    if (!Array.isArray(data.plants)) throw 0;
-    store.plants = data.plants;
-    toast("Zaimportowano " + data.plants.length + " roślin");
-    goto("plants");
-  } catch { toast("Nieprawidłowy plik kopii"); }
-});
 
 // ============ POWIADOMIENIA ============
 $("#notif-btn").addEventListener("click", async () => {

@@ -1,6 +1,6 @@
 /* PlantApp cloud — konto + synchronizacja multi-device (Supabase).
-   Offline-first: localStorage jest źródłem prawdy na urządzeniu,
-   chmura to replika scalana per-roślina po updated_at (last-write-wins). */
+   Po zalogowaniu Supabase jest źródłem synchronizacji, a localStorage
+   działa jako cache offline oraz bufor zmian wykonanych bez sieci. */
 "use strict";
 
 (function () {
@@ -15,6 +15,9 @@
 
   const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   let user = null;
+  let pushTimer = null;
+  let lastPull = 0;
+  let syncInProgress = false;
   const authScreen = document.querySelector("#view-auth");
 
   function showAuthScreen(show) {
@@ -46,8 +49,6 @@
       showAuthScreen(false);
     };
   }
-  let pushTimer = null;
-  let lastPull = 0;
 
   const tombs = {
     get list() { return JSON.parse(localStorage.getItem("pa_tombstones") || "[]"); },
@@ -55,16 +56,31 @@
     clear() { localStorage.removeItem("pa_tombstones"); },
   };
 
+  function syncMetaKey() { return user ? `pa_last_cloud_sync_${user.id}` : ""; }
+  function lastCloudSync() { return Number(localStorage.getItem(syncMetaKey()) || 0); }
+  function markCloudSynced(t = Date.now()) { localStorage.setItem(syncMetaKey(), String(t)); }
+  function plantTime(plant) { return Number(plant?.updatedAt || plant?.added || 0); }
+  function rowTime(row) { return new Date(row.updated_at).getTime() || 0; }
+  function hasPendingLocalChange(plant) { return plantTime(plant) > lastCloudSync(); }
+  function localPlants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); }
+  function samePlants(a, b) { return JSON.stringify(a) === JSON.stringify(b); }
+  function saveLocal(plants) {
+    localStorage.setItem("pa_plants", JSON.stringify(plants));
+    if (typeof renderPlants === "function") renderPlants();
+  }
   function setStatus(msg, err) {
     const el = document.querySelector("#sync-status");
     if (el) { el.textContent = msg; el.classList.toggle("usage-low", !!err); }
+  }
+  function syncTimeText() {
+    return new Date().toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" });
   }
 
   // ---------- UI ----------
   function renderCloudUI() {
     if (!user) {
       cardBody.innerHTML = `
-        <p class="muted">Konto = kopia w chmurze i te same rośliny na każdym urządzeniu.</p>
+        <p class="muted">Zaloguj się, aby Supabase zapisywał rośliny w chmurze i synchronizował je między urządzeniami. Bez konta dane zostają tylko w tej przeglądarce.</p>
         <div class="row"><input type="email" id="cl-email" placeholder="E-mail" autocomplete="email"></div>
         <div class="row"><input type="password" id="cl-pass" placeholder="Hasło (min. 6 znaków)" autocomplete="current-password"></div>
         <div class="row">
@@ -77,7 +93,8 @@
     } else {
       cardBody.innerHTML = `
         <p class="muted">Zalogowano: <strong>${user.email}</strong></p>
-        <div id="sync-status" class="muted small">—</div>
+        <p class="muted small">Supabase jest źródłem synchronizacji. Dane w tej przeglądarce są cache’em offline i buforem zmian wykonanych bez sieci.</p>
+        <div id="sync-status" class="muted small">Status synchronizacji: oczekiwanie…</div>
         <div class="row">
           <button class="btn btn-primary" id="cl-sync">🔄 Synchronizuj teraz</button>
           <button class="btn btn-ghost" id="cl-logout">Wyloguj</button>
@@ -105,61 +122,88 @@
   }
 
   // ---------- SYNC ----------
-  function localPlants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); }
-  function saveLocal(plants) { localStorage.setItem("pa_plants", JSON.stringify(plants)); if (typeof renderPlants === "function") renderPlants(); }
+  async function pullFromCloud() {
+    if (!user) return { ok: false, shouldPush: false };
+    const { data: rows, error } = await sb.from("plants").select("id,data,updated_at");
+    if (error) { setStatus("Błąd pobierania: " + error.message, true); return { ok: false, shouldPush: false }; }
 
-  async function pushAll() {
-    if (!user) return;
+    lastPull = Date.now();
+    const lastSync = lastCloudSync();
+    const local = localPlants();
+    const remoteRows = rows || [];
+    const localTombs = new Set(tombs.list);
+    const liveRows = remoteRows.filter(row => !(row.data && row.data.deleted));
+    const remoteById = Object.fromEntries(liveRows.map(row => [row.id, row]));
+    const deletedById = Object.fromEntries(remoteRows.filter(row => row.data && row.data.deleted).map(row => [row.id, row]));
+    const nextById = Object.fromEntries(liveRows.filter(row => !localTombs.has(row.id)).map(row => [row.id, row.data]));
+    let shouldPush = tombs.list.length > 0;
+
+    if (!remoteRows.length && local.length && !lastSync) {
+      // Pierwsze logowanie do pustego konta: zachowujemy lokalną kolekcję i wysyłamy ją do Supabase.
+      shouldPush = true;
+    } else {
+      for (const plant of local) {
+        const id = plant.id;
+        if (localTombs.has(id)) continue;
+        const localT = plantTime(plant);
+        const remote = remoteById[id];
+        const deleted = deletedById[id];
+        const remoteT = remote ? rowTime(remote) : 0;
+        const deletedT = deleted ? rowTime(deleted) : 0;
+        const pending = lastSync && localT > lastSync;
+
+        if (pending && localT > remoteT && localT > deletedT) {
+          nextById[id] = plant;
+          shouldPush = true;
+        }
+      }
+
+      const next = Object.values(nextById);
+      if (!samePlants(local, next)) saveLocal(next);
+    }
+
+    return { ok: true, shouldPush };
+  }
+
+  async function pushPending(forceAll) {
+    if (!user) return false;
     const plants = localPlants();
-    const rows = plants.map(p => ({
+    const pendingPlants = forceAll ? plants : plants.filter(hasPendingLocalChange);
+    const rows = pendingPlants.map(p => ({
       id: p.id,
       user_id: user.id,
       data: p,
-      updated_at: new Date(p.updatedAt || p.added || Date.now()).toISOString(),
+      updated_at: new Date(plantTime(p) || Date.now()).toISOString(),
     }));
     tombs.list.forEach(id => rows.push({ id, user_id: user.id, data: { deleted: true }, updated_at: new Date().toISOString() }));
-    if (!rows.length) return;
+    if (!rows.length) return true;
+
     const { error } = await sb.from("plants").upsert(rows, { onConflict: "id" });
-    if (error) { setStatus("Błąd wysyłki: " + error.message, true); return; }
+    if (error) { setStatus("Błąd wysyłki: " + error.message, true); return false; }
     tombs.clear();
-    setStatus("Zsynchronizowano: " + new Date().toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }));
-  }
-
-  async function pullMerge() {
-    if (!user) return;
-    const { data: rows, error } = await sb.from("plants").select("id,data,updated_at");
-    if (error) { setStatus("Błąd pobierania: " + error.message, true); return; }
-    lastPull = Date.now();
-    const local = localPlants();
-    const byId = Object.fromEntries(local.map(p => [p.id, p]));
-    let changed = false;
-    const deadHere = new Set(tombs.list);
-
-    for (const row of rows || []) {
-      const remoteT = new Date(row.updated_at).getTime();
-      const mine = byId[row.id];
-      const mineT = mine ? (mine.updatedAt || mine.added || 0) : 0;
-      if (row.data && row.data.deleted) {
-        if (mine && mineT <= remoteT) { delete byId[row.id]; changed = true; }
-        continue;
-      }
-      if (deadHere.has(row.id)) continue; // lokalnie usunięta, tombstone poleci przy push
-      if (!mine || remoteT > mineT) { byId[row.id] = row.data; changed = true; }
-    }
-    if (changed) saveLocal(Object.values(byId));
+    return true;
   }
 
   async function fullSync(manual) {
-    if (!user) return;
-    setStatus(manual ? "Synchronizuję…" : "…");
-    await pullMerge();
-    await pushAll();
+    if (!user || syncInProgress) return;
+    syncInProgress = true;
+    setStatus(manual ? "Status synchronizacji: synchronizuję…" : "Status synchronizacji: sprawdzam chmurę…");
+    const pulled = await pullFromCloud();
+    if (pulled.ok) {
+      const pushed = await pushPending(pulled.shouldPush && !lastCloudSync());
+      if (pushed) {
+        markCloudSynced();
+        setStatus("Status synchronizacji: zsynchronizowano o " + syncTimeText());
+      }
+    }
+    syncInProgress = false;
   }
 
   function schedulePush() {
     if (!user) return;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(pushAll, 4000);
+    setStatus("Status synchronizacji: zmiany czekają na wysłanie…");
+    pushTimer = setTimeout(() => fullSync(false), 4000);
   }
 
   // ---------- ZDARZENIA ----------
