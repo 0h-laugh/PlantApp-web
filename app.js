@@ -9,6 +9,14 @@ const store = {
     catch (e) { toast("⚠️ Pamięć pełna — usuń stare zdjęcia z dziennika lub zrób eksport"); }
     window.dispatchEvent(new CustomEvent("pa:change"));
   },
+  get homes() { return JSON.parse(localStorage.getItem("pa_homes") || "[]"); },
+  set homes(v) { localStorage.setItem("pa_homes", JSON.stringify(v)); window.dispatchEvent(new CustomEvent("pa:places-change")); },
+  get rooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); },
+  set rooms(v) { localStorage.setItem("pa_rooms", JSON.stringify(v)); window.dispatchEvent(new CustomEvent("pa:places-change")); },
+  get currentHomeId() { return localStorage.getItem("pa_current_home") || ""; },
+  set currentHomeId(v) { v ? localStorage.setItem("pa_current_home", v) : localStorage.removeItem("pa_current_home"); },
+  get currentRoomId() { return localStorage.getItem("pa_current_room") || ""; },
+  set currentRoomId(v) { v ? localStorage.setItem("pa_current_room", v) : localStorage.removeItem("pa_current_room"); },
   get apiKey() { return localStorage.getItem("pa_apikey") || ""; },
   set apiKey(v) { localStorage.setItem("pa_apikey", v); },
   get usage() {
@@ -59,8 +67,39 @@ function toast(msg) {
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 
-// ============ MIGRACJA v1.0 → v1.1 (history → journal) ============
+// ============ MIGRACJA v1.0 → v1.2 (miejsca/pokoje + history → journal) ============
+const DEFAULT_HOME_NAME = "Mój dom";
+const DEFAULT_ROOM_NAME = "Bez pokoju";
+
+window.ensureDefaultPlace = ensureDefaultPlace;
+function ensureDefaultPlace() {
+  let homes = store.homes;
+  let rooms = store.rooms;
+  let changedHomes = false, changedRooms = false;
+  let home = homes[0];
+  if (!home) {
+    const now = Date.now();
+    home = { id: "home_" + uid(), name: DEFAULT_HOME_NAME, address: "", createdAt: now, updatedAt: now };
+    homes = [home];
+    changedHomes = true;
+  }
+  let room = rooms.find(r => r.homeId === home.id && r.name === DEFAULT_ROOM_NAME) || rooms.find(r => r.homeId === home.id);
+  if (!room) {
+    const now = Date.now();
+    room = { id: "room_" + uid(), homeId: home.id, name: DEFAULT_ROOM_NAME, sortOrder: 0, createdAt: now, updatedAt: now };
+    rooms = [room, ...rooms];
+    changedRooms = true;
+  }
+  if (!store.currentHomeId || !homes.some(h => h.id === store.currentHomeId)) store.currentHomeId = home.id;
+  if (store.currentRoomId && !rooms.some(r => r.id === store.currentRoomId && r.homeId === store.currentHomeId)) store.currentRoomId = "";
+  if (changedHomes) store.homes = homes;
+  if (changedRooms) store.rooms = rooms;
+  return { homeId: home.id, roomId: room.id };
+}
+
 (function migrate() {
+  const def = ensureDefaultPlace();
+  const rooms = store.rooms;
   const plants = store.plants;
   let changed = false;
   plants.forEach(p => {
@@ -70,6 +109,8 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;
       delete p.history;
       changed = true;
     }
+    if (!p.homeId || !store.homes.some(h => h.id === p.homeId)) { p.homeId = def.homeId; changed = true; }
+    if (!p.roomId || !rooms.some(r => r.id === p.roomId && r.homeId === p.homeId)) { p.roomId = def.roomId; changed = true; }
   });
   if (changed) store.plants = plants;
 })();
@@ -160,7 +201,7 @@ function plantInsights(p) {
 }
 function allInsights(limit = 4) {
   const items = [];
-  store.plants.forEach(p => plantInsights(p).forEach(i => items.push({ ...i, plant: p })));
+  filteredPlants().forEach(p => plantInsights(p).forEach(i => items.push({ ...i, plant: p })));
   return items.sort((a, b) => a.prio - b.prio).slice(0, limit);
 }
 
@@ -196,12 +237,43 @@ function ringSVG(plant, size = 54) {
   </div>`;
 }
 
+function currentHome() {
+  ensureDefaultPlace();
+  return store.homes.find(h => h.id === store.currentHomeId) || store.homes[0];
+}
+function roomsForHome(homeId = store.currentHomeId) {
+  return store.rooms.filter(r => r.homeId === homeId).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.name.localeCompare(b.name, "pl"));
+}
+function filteredPlants() {
+  ensureDefaultPlace();
+  return store.plants.filter(p => p.homeId === store.currentHomeId && (!store.currentRoomId || p.roomId === store.currentRoomId));
+}
+function roomName(id) { return store.rooms.find(r => r.id === id)?.name || DEFAULT_ROOM_NAME; }
+function homeLabel(h) { return h.address ? `${h.name} · ${h.address}` : h.name; }
+function renderPlaceControls() {
+  const homeSelect = $("#home-select"), roomChips = $("#room-chips"), hint = $("#place-filter-hint");
+  if (!homeSelect || !roomChips) return;
+  ensureDefaultPlace();
+  const homes = store.homes;
+  homeSelect.innerHTML = homes.map(h => `<option value="${esc(h.id)}" ${h.id === store.currentHomeId ? "selected" : ""}>${esc(homeLabel(h))}</option>`).join("");
+  const rooms = roomsForHome();
+  const activeRoomOk = !store.currentRoomId || rooms.some(r => r.id === store.currentRoomId);
+  if (!activeRoomOk) store.currentRoomId = "";
+  roomChips.innerHTML = `<button class="chip ${!store.currentRoomId ? "active" : ""}" data-room="">Wszystkie pokoje</button>`
+    + rooms.map(r => `<button class="chip ${r.id === store.currentRoomId ? "active" : ""}" data-room="${esc(r.id)}">${esc(r.name)}</button>`).join("");
+  const home = currentHome();
+  const count = filteredPlants().length;
+  if (hint) hint.textContent = `${count} ${count === 1 ? "roślina" : count < 5 ? "rośliny" : "roślin"} · ${homeLabel(home)}${store.currentRoomId ? " · " + roomName(store.currentRoomId) : ""}`;
+}
+
 // ============ LISTA ROŚLIN (siatka kafli) ============
 function renderPlants() {
-  const plants = store.plants;
+  renderPlaceControls();
+  const plants = filteredPlants();
+  const allPlants = store.plants;
   const list = $("#plants-list"), empty = $("#plants-empty"), banner = $("#due-banner");
   list.innerHTML = "";
-  empty.classList.toggle("hidden", plants.length > 0);
+  empty.classList.toggle("hidden", allPlants.length > 0);
 
   const due = plants.filter(p => daysUntilWater(p) <= 0);
   const fertDue = plants.filter(p => { const f = daysUntilFert(p); return f !== null && f <= 0; });
@@ -210,7 +282,7 @@ function renderPlants() {
   const hd = $("#hero-date"), hl = $("#hero-line");
   if (hd) hd.textContent = new Date().toLocaleDateString("pl-PL", { weekday: "long", day: "numeric", month: "long" }) + " · " + (isSummer() ? "sezon wzrostu" : "spoczynek zimowy");
   if (hl) {
-    if (!plants.length) hl.textContent = "Zacznij od pierwszego skanu";
+    if (!allPlants.length) hl.textContent = "Zacznij od pierwszego skanu";
     else if (due.length) hl.innerHTML = `<span class="hero-num">${due.length}</span> ${due.length === 1 ? "roślina czeka" : due.length < 5 ? "rośliny czekają" : "roślin czeka"} na wodę`;
     else hl.innerHTML = `Wszystko podlane <span class="hero-ok">✓</span>`;
   }
@@ -249,7 +321,7 @@ function renderPlants() {
       <div class="tile-grad"></div>
       <div class="tile-meta">
         <div class="tile-name">${esc(p.name)}</div>
-        <div class="tile-due-txt ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "podlej dziś" : "woda za " + d + " dn."}</div>
+        <div class="tile-due-txt ${d <= 0 ? "overdue" : ""}">${esc(roomName(p.roomId))} · ${d <= 0 ? "podlej dziś" : "woda za " + d + " dn."}</div>
       </div>`;
     el.addEventListener("click", () => openDetail(p.id));
     list.appendChild(el);
@@ -286,6 +358,7 @@ function openDetail(id) {
       <div>
         <div class="detail-name">${esc(p.name)}</div>
         <div class="detail-latin">${esc(p.latin || "")}</div>
+        <div class="detail-latin">📍 ${esc(homeLabel(store.homes.find(h => h.id === p.homeId) || currentHome()))} · ${esc(roomName(p.roomId))}</div>
         ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px">⚠️ Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px">✓ Bezpieczna dla zwierząt</div>` : ""}
       </div>
     </div>
@@ -496,7 +569,10 @@ function renderScanResults(results) {
 function addPlant(latin, displayName) {
   const name = prompt("Nazwa rośliny (np. „Monstera w salonie”):", displayName) || displayName;
   const plants = store.plants;
-  plants.push({ id: uid(), name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
+  const place = ensureDefaultPlace();
+  const homeId = store.currentHomeId || place.homeId;
+  const roomId = store.currentRoomId || place.roomId;
+  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
@@ -636,7 +712,7 @@ $("#save-key").addEventListener("click", () => {
 });
 
 $("#export-btn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ plants: store.plants, exported: new Date().toISOString(), version: "1.1" }, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ plants: store.plants, homes: store.homes, rooms: store.rooms, currentHomeId: store.currentHomeId, currentRoomId: store.currentRoomId, exported: new Date().toISOString(), version: "1.2" }, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "plantapp-backup-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -647,7 +723,12 @@ $("#import-file").addEventListener("change", async (e) => {
   try {
     const data = JSON.parse(await f.text());
     if (!Array.isArray(data.plants)) throw 0;
+    if (Array.isArray(data.homes)) store.homes = data.homes;
+    if (Array.isArray(data.rooms)) store.rooms = data.rooms;
+    if (data.currentHomeId) store.currentHomeId = data.currentHomeId;
+    if (data.currentRoomId) store.currentRoomId = data.currentRoomId;
     store.plants = data.plants;
+    ensureDefaultPlace();
     toast("Zaimportowano " + data.plants.length + " roślin");
     goto("plants");
   } catch { toast("Nieprawidłowy plik kopii"); }
@@ -684,6 +765,8 @@ function init() {
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
   $("#api-key").value = store.apiKey;
+  $("#home-select")?.addEventListener("change", (e) => { store.currentHomeId = e.target.value; store.currentRoomId = ""; renderPlants(); });
+  $("#room-chips")?.addEventListener("click", (e) => { const c = e.target.closest(".chip"); if (!c) return; store.currentRoomId = c.dataset.room || ""; renderPlants(); });
   renderSymptoms();
   renderPlants();
   renderDoctorPlantPicker();
