@@ -105,7 +105,8 @@
   }
 
   // ---------- SYNC ----------
-  const ROOMS_SYNC_ID = "__plantapp_rooms__";
+  const ROOMS_SYNC_PREFIX = "__plantapp_rooms__";
+  function roomsSyncId() { return `${ROOMS_SYNC_PREFIX}:${user.id}`; }
   function localPlants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); }
   function localRooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); }
   function saveLocal(plants, rooms = null) {
@@ -137,7 +138,7 @@
     }));
     const roomsUpdatedAt = Math.max(0, ...rooms.map(r => r.updatedAt || r.updated_at || 0));
     rows.push({
-      id: ROOMS_SYNC_ID,
+      id: roomsSyncId(),
       user_id: user.id,
       data: { type: "rooms", rooms },
       updated_at: new Date(roomsUpdatedAt || Date.now()).toISOString(),
@@ -165,7 +166,7 @@
 
     for (const row of rows || []) {
       const remoteT = new Date(row.updated_at).getTime();
-      if (row.id === ROOMS_SYNC_ID || row.data?.type === "rooms") {
+      if (row.id === roomsSyncId() || (row.id || "").startsWith(ROOMS_SYNC_PREFIX + ":") || row.data?.type === "rooms") {
         if (Array.isArray(row.data?.rooms) && remoteT > localRoomsT) {
           rooms = normalizeRoomsForCloud(row.data.rooms);
           roomsChanged = true;
