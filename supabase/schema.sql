@@ -82,7 +82,10 @@ as $$
 $$;
 
 drop policy if exists "homes_select_member" on public.homes;
-create policy "homes_select_member" on public.homes for select using (public.is_home_member(id, auth.uid()));
+-- Owner check is evaluated directly against the new row so upserts (INSERT ... ON
+-- CONFLICT DO UPDATE) of brand-new homes pass; is_home_member() is SECURITY DEFINER
+-- and cannot see the not-yet-committed row, which previously caused an RLS 403.
+create policy "homes_select_member" on public.homes for select using (owner_id = auth.uid() or public.is_home_member(id, auth.uid()));
 drop policy if exists "homes_insert_owner" on public.homes;
 create policy "homes_insert_owner" on public.homes for insert with check (auth.uid() = owner_id);
 drop policy if exists "homes_update_owner" on public.homes;
