@@ -360,3 +360,91 @@ body.auth-open { overflow: hidden; }
 .as-txt { font-size: .86rem; line-height: 1.45; color: var(--ink-dim); }
 .as-txt strong { color: var(--ink); }
 .as-card .as-line { display: flex; gap: 10px; align-items: flex-start; font-size: .87rem; line-height: 1.5; color: var(--ink-dim); padding: 6px 0; }
+
+/* ---------- modals: photo viewer + note editor ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(3, 10, 6, .78);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+.modal-close {
+  border: 0;
+  background: rgba(15, 31, 21, .82);
+  color: var(--ink);
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  font-size: 1.35rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.photo-viewer-panel {
+  position: relative;
+  z-index: 1;
+  max-width: min(980px, 100%);
+  max-height: min(82vh, 820px);
+}
+.photo-viewer-panel .modal-close {
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  z-index: 2;
+}
+#photo-viewer-img {
+  display: block;
+  max-width: 100%;
+  max-height: min(82vh, 820px);
+  object-fit: contain;
+  border-radius: 18px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, .42);
+}
+.detail-photo:is(img), .evo-item img, .tl-thumb { cursor: zoom-in; }
+.note-panel {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  background: var(--card);
+  border: 1px solid var(--card-edge);
+  border-radius: 22px;
+  padding: 18px;
+  box-shadow: 0 22px 70px rgba(0, 0, 0, .36);
+}
+.note-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.note-head h2 { margin: 0; font-size: 1.15rem; }
+.note-field { display: grid; gap: 7px; margin-bottom: 12px; font-size: .78rem; color: var(--ink-dim); font-weight: 700; }
+.note-field input, .note-field textarea {
+  width: 100%;
+  border: 1px solid var(--card-edge);
+  border-radius: 14px;
+  background: var(--bg-soft);
+  color: var(--ink);
+  font: inherit;
+  padding: 12px;
+}
+.note-field textarea { resize: vertical; min-height: 140px; line-height: 1.45; }
+.note-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.tl-note-title { display: block; margin-bottom: 3px; }
+.tl-note-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.tl-note-text.collapsed { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.tl-more, .tl-edit {
+  border: 0;
+  background: none;
+  color: var(--leaf);
+  font: inherit;
+  font-size: .78rem;
+  font-weight: 800;
+  padding: 6px 0 0;
+  cursor: pointer;
+}
+.tl-tools { display: flex; gap: 12px; flex-wrap: wrap; }

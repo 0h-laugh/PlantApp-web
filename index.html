@@ -210,6 +210,37 @@
 
 <div id="toast" class="toast hidden"></div>
 
+<div id="photo-viewer" class="modal photo-viewer hidden" aria-hidden="true" role="dialog" aria-label="Podgląd zdjęcia">
+  <button class="modal-backdrop" type="button" data-close-photo aria-label="Zamknij podgląd"></button>
+  <div class="photo-viewer-panel">
+    <button class="modal-close" type="button" data-close-photo aria-label="Zamknij">×</button>
+    <img id="photo-viewer-img" src="" alt="Zdjęcie w pełnym rozmiarze">
+  </div>
+</div>
+
+<div id="note-modal" class="modal note-modal hidden" aria-hidden="true" role="dialog" aria-labelledby="note-modal-title">
+  <button class="modal-backdrop" type="button" data-close-note aria-label="Zamknij formularz notatki"></button>
+  <form id="note-form" class="note-panel">
+    <div class="note-head">
+      <h2 id="note-modal-title">Dodaj notatkę</h2>
+      <button class="modal-close" type="button" data-close-note aria-label="Zamknij">×</button>
+    </div>
+    <label class="note-field">
+      <span>Tytuł (opcjonalnie)</span>
+      <input id="note-title" type="text" maxlength="80" placeholder="np. Przesadzanie">
+    </label>
+    <label class="note-field">
+      <span>Treść notatki</span>
+      <textarea id="note-text" rows="6" required placeholder="Co zmieniło się u rośliny?"></textarea>
+    </label>
+    <div class="note-actions">
+      <button class="btn btn-ghost" type="button" data-close-note>Anuluj</button>
+      <button class="btn btn-primary" type="submit">Zapisz</button>
+    </div>
+  </form>
+</div>
+
+
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>
 <script src="care-db.js"></script>
