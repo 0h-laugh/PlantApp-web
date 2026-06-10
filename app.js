@@ -113,6 +113,28 @@ function toast(msg) {
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 
+function entryPhotos(entry) {
+  if (Array.isArray(entry.photos)) return entry.photos.filter(Boolean);
+  return entry.photo ? [entry.photo] : [];
+}
+function normalizeJournalEntry(entry) {
+  const t = entry.t || entry.createdAt || Date.now();
+  const photos = entryPhotos(entry);
+  return {
+    id: entry.id || uid(),
+    title: entry.title || "",
+    text: entry.text || "",
+    updatedAt: entry.updatedAt || t,
+    userId: null,
+    userEmail: null,
+    displayName: "local",
+    ...entry,
+    t,
+    photos,
+    photo: entry.photo || photos[0],
+  };
+}
+
 // ============ MIGRACJA v1.0 → v1.2 (miejsca/pokoje + history → journal) ============
 const DEFAULT_HOME_NAME = "Mój dom";
 const DEFAULT_ROOM_NAME = "Bez pokoju";
@@ -228,11 +250,11 @@ window.movePlantToRoom = movePlantToRoom;
     }
     if (!p.homeId || !store.homes.some(h => h.id === p.homeId)) { p.homeId = def.homeId; changed = true; }
     if (!p.roomId || !rooms.some(r => r.id === p.roomId && r.homeId === p.homeId)) { p.roomId = def.roomId; changed = true; }
-    (p.journal || []).forEach(e => {
-      if (!("userId" in e)) { e.userId = null; changed = true; }
-      if (!("userEmail" in e)) { e.userEmail = null; changed = true; }
-      if (!("displayName" in e)) { e.displayName = "local"; changed = true; }
-    });
+    const normalized = (p.journal || []).map(e => normalizeJournalEntry(e));
+    if (JSON.stringify(normalized) !== JSON.stringify(p.journal || [])) {
+      p.journal = normalized;
+      changed = true;
+    }
   });
   if (changed) store.plants = plants;
 })();
@@ -242,9 +264,9 @@ function addJournal(plantId, entry) {
   const plants = store.plants;
   const p = plants.find(x => x.id === plantId);
   if (!p) return false;
-  p.journal = p.journal || [];
   const now = Date.now();
-  const journalEntry = { id: uid(), t: now, ...currentJournalAuthor(), ...entry };
+  p.journal = p.journal || [];
+  const journalEntry = normalizeJournalEntry({ t: now, updatedAt: now, ...currentJournalAuthor(), ...entry });
   p.journal.push(journalEntry);
   p.updatedAt = now;
   if (entry.type === "water") p.lastWatered = journalEntry.t;
@@ -317,7 +339,7 @@ function plantInsights(p) {
   if (f !== null && f <= 0) out.push({ prio: 1, ico: "🌿", text: "Czas nawieźć — ostatnie nawożenie ponad miesiąc temu w sezonie wzrostu." });
   if (!isSummer() && /wysok/i.test(care.humidity)) out.push({ prio: 2, ico: "💨", text: "Sezon grzewczy + roślina lubiąca wilgoć: zraszaj lub dostaw nawilżacz, obserwuj końcówki liści." });
 
-  const photos = j.filter(e => e.photo);
+  const photos = j.filter(e => entryPhotos(e).length);
   const lastPhoto = Math.max(p.added || 0, ...photos.map(e => e.t));
   if (Date.now() - lastPhoto > 30 * DAY) out.push({ prio: 3, ico: "📷", text: "Ponad miesiąc bez zdjęcia — dodaj jedno do ewolucji, łatwiej wychwycisz powolne zmiany." });
 
@@ -768,8 +790,86 @@ const JOURNAL_META = {
   fert: { ico: "🌿", label: e => `Nawiózł/a ${esc(journalAuthor(e))}` },
   diagnosis: { ico: "🩺", label: e => `Diagnoza (${esc(journalAuthor(e))}): ${esc(e.name)}${e.score ? " (" + e.score + "%)" : ""}${e.src === "objawy" ? " — z objawów" : ""}` },
   photo: { ico: "📷", label: e => `Zdjęcie — ${esc(journalAuthor(e))}` },
-  note: { ico: "📝", label: e => `${esc(journalAuthor(e))}: ${esc(e.text)}` },
+  note: { ico: "📝", label: e => `${esc(journalAuthor(e))}: ${esc(e.title || e.text || "Notatka")}` },
 };
+
+const NOTE_COLLAPSE_LIMIT = 180;
+let noteContext = null;
+let photoViewerOpen = false;
+let suppressPhotoPop = false;
+
+function renderTimelineEntry(e, i) {
+  const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
+  const photos = entryPhotos(e);
+  const isNote = e.type === "note";
+  const noteText = e.text || "";
+  const longNote = isNote && noteText.length > NOTE_COLLAPSE_LIMIT;
+  const title = e.title || (isNote ? "Notatka" : m.label(e));
+  const label = isNote ? `
+    <div class="tl-label">
+      <strong class="tl-note-title">${esc(title)}</strong>
+      <div class="tl-note-text ${longNote ? "collapsed" : ""}">${esc(noteText)}</div>
+      <div class="tl-note-author">${esc(journalAuthor(e))}</div>
+    </div>` : `<div class="tl-label">${m.label(e)}</div>`;
+  return `<div class="tl-entry">
+    <div class="tl-ico">${m.ico}</div>
+    <div class="tl-body">
+      ${label}
+      <div class="tl-date">${fmtWhen(e.t)}${e.updatedAt && e.updatedAt !== e.t ? " · edytowano " + fmtWhen(e.updatedAt) : ""}</div>
+      ${photos.map(photo => `<img class="tl-thumb" src="${photo}" alt="" loading="lazy">`).join("")}
+      ${isNote ? `<div class="tl-tools">${longNote ? `<button class="tl-more" type="button">Pokaż całość</button>` : ""}<button class="tl-edit" type="button" data-edit="${e.id}">Edytuj</button></div>` : ""}
+    </div>
+    <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
+  </div>`;
+}
+
+function openPhotoViewer(src) {
+  const modal = $("#photo-viewer"), img = $("#photo-viewer-img");
+  if (!modal || !img || !src) return;
+  img.src = src;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  photoViewerOpen = true;
+  if (!history.state || !history.state.photoViewer) history.pushState({ ...(history.state || {}), photoViewer: true }, "");
+}
+function closePhotoViewer(fromPop = false) {
+  const modal = $("#photo-viewer"), img = $("#photo-viewer-img");
+  if (!modal || modal.classList.contains("hidden")) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  if (img) img.src = "";
+  document.body.classList.remove("modal-open");
+  photoViewerOpen = false;
+  if (!fromPop && history.state?.photoViewer) {
+    suppressPhotoPop = true;
+    history.back();
+  }
+}
+
+function openNoteModal(plantId, entryId = null) {
+  const modal = $("#note-modal"), form = $("#note-form");
+  const titleInput = $("#note-title"), textInput = $("#note-text"), heading = $("#note-modal-title");
+  if (!modal || !form || !titleInput || !textInput) return;
+  const plant = store.plants.find(p => p.id === plantId);
+  const entry = entryId ? (plant?.journal || []).find(e => e.id === entryId) : null;
+  noteContext = { plantId, entryId };
+  heading.textContent = entry ? "Edytuj notatkę" : "Dodaj notatkę";
+  titleInput.value = entry?.title || "";
+  textInput.value = entry?.text || "";
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  setTimeout(() => textInput.focus(), 0);
+}
+function closeNoteModal() {
+  const modal = $("#note-modal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("modal-open");
+  noteContext = null;
+}
 
 function openDetail(id, options = {}) {
   const p = store.plants.find(x => x.id === id);
@@ -787,7 +887,9 @@ function openDetail(id, options = {}) {
   // ewolucja: wszystkie zdjęcia w czasie (start + dziennik), chronologicznie
   const evoPhotos = [];
   if (p.photo) evoPhotos.push({ t: p.added, photo: p.photo, tag: "start" });
-  (p.journal || []).filter(e => e.photo).sort((a, b) => a.t - b.t).forEach(e => evoPhotos.push({ t: e.t, photo: e.photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
+  (p.journal || []).filter(e => entryPhotos(e).length).sort((a, b) => a.t - b.t).forEach(e => {
+    entryPhotos(e).forEach(photo => evoPhotos.push({ t: e.t, photo, tag: e.type === "diagnosis" ? "🩺" : "" }));
+  });
 
   $("#plant-detail-content").innerHTML = `
     <div class="detail-hero">
@@ -867,18 +969,7 @@ function openDetail(id, options = {}) {
 
     <div class="card">
       <div class="sec-k">📖 Dziennik (${journal.length})</div>
-      ${journal.length ? `<div class="timeline">${journal.map((e, i) => {
-        const m = JOURNAL_META[e.type] || { ico: "•", label: () => e.type };
-        return `<div class="tl-entry">
-          <div class="tl-ico">${m.ico}</div>
-          <div class="tl-body">
-            <div class="tl-label">${m.label(e)}</div>
-            <div class="tl-date">${fmtWhen(e.t)}</div>
-            ${e.photo && e.type !== "photo" ? `<img class="tl-thumb" src="${e.photo}" alt="" loading="lazy">` : ""}
-          </div>
-          <button class="tl-del" data-del="${i}" aria-label="Usuń wpis">✕</button>
-        </div>`;
-      }).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
+      ${journal.length ? `<div class="timeline">${journal.map((e, i) => renderTimelineEntry(e, i)).join("")}</div>` : `<p class="muted">Pusto. Podlej, dodaj zdjęcie albo zdiagnozuj — wszystko zapisze się tutaj.</p>`}
     </div>
 
     <button class="btn btn-danger btn-block" id="delete-plant">Usuń roślinę</button>
@@ -903,14 +994,11 @@ function openDetail(id, options = {}) {
   $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
   const fertBtn = $("#fert-now");
   if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
-  $("#add-note").onclick = () => {
-    const text = prompt("Notatka (np. „przesadzona do większej doniczki”):");
-    if (text && text.trim()) { addJournal(id, { type: "note", text: text.trim() }); openDetail(id); }
-  };
+  $("#add-note").onclick = () => openNoteModal(id);
   $("#journal-photo-file").addEventListener("change", async (e) => {
     const f = e.target.files[0]; if (!f) return;
     const photo = await blobToDataURL(await fileToCompressed(f, 420, 0.72));
-    addJournal(id, { type: "photo", photo });
+    addJournal(id, { type: "photo", title: "Zdjęcie", photos: [photo], photo });
     toast("📷 Dodano do dziennika"); openDetail(id);
   });
   $("#diagnose-this").addEventListener("click", () => { doctorPlantId = id; }, { capture: true });
@@ -924,6 +1012,16 @@ function openDetail(id, options = {}) {
       p.journal = p.journal.filter(e => e !== victim);
     });
     openDetail(id);
+  });
+  $$("#plant-detail-content .tl-more").forEach(btn => btn.onclick = () => {
+    const text = btn.closest(".tl-body")?.querySelector(".tl-note-text");
+    if (!text) return;
+    const collapsed = text.classList.toggle("collapsed");
+    btn.textContent = collapsed ? "Pokaż całość" : "Zwiń";
+  });
+  $$("#plant-detail-content .tl-edit").forEach(btn => btn.onclick = () => openNoteModal(id, btn.dataset.edit));
+  $$("#plant-detail-content .detail-photo, #plant-detail-content .evo-item img, #plant-detail-content .tl-thumb").forEach(img => {
+    if (img.tagName === "IMG") img.addEventListener("click", (ev) => { ev.stopPropagation(); openPhotoViewer(img.currentSrc || img.src); });
   });
   $("#delete-plant").onclick = () => {
     if (confirm(`Usunąć „${p.name}" razem z dziennikiem?`)) {
@@ -1040,7 +1138,7 @@ function addPlant(latin, displayName) {
   const place = ensureDefaultPlace();
   const homeId = store.currentHomeId || place.homeId;
   const roomId = store.currentRoomId || place.roomId;
-  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ id: uid(), t: Date.now(), type: "added", ...currentJournalAuthor() }] });
+  plants.push({ id: uid(), homeId, roomId, name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [normalizeJournalEntry({ t: Date.now(), type: "added", title: "Dodano do kolekcji", ...currentJournalAuthor() })] });
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
@@ -1111,7 +1209,7 @@ $("#doctor-go").addEventListener("click", async () => {
 
 function saveDiagnosis(name, score, src) {
   if (!doctorPlantId) { toast("Wybierz roślinę u góry, żeby zapisać do dziennika"); return false; }
-  const ok = addJournal(doctorPlantId, { type: "diagnosis", name, score, src, photo: src === "ai" ? doctorThumb : undefined });
+  const ok = addJournal(doctorPlantId, { type: "diagnosis", title: `Diagnoza: ${name}`, text: "", name, score, src, photos: src === "ai" && doctorThumb ? [doctorThumb] : [], photo: src === "ai" ? doctorThumb : undefined });
   if (ok) {
     const p = store.plants.find(x => x.id === doctorPlantId);
     toast(`🩺 Zapisano w dzienniku: ${p.name}`);
@@ -1233,6 +1331,46 @@ function checkDueAndNotify() {
     } catch { /* brak wsparcia */ }
   }
 }
+
+
+// ============ MODALE: zdjęcia i notatki ============
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-close-photo]")) closePhotoViewer();
+  if (e.target.closest("[data-close-note]")) closeNoteModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("#photo-viewer")?.classList.contains("hidden")) closePhotoViewer();
+  else if (!$("#note-modal")?.classList.contains("hidden")) closeNoteModal();
+});
+window.addEventListener("popstate", () => {
+  if (suppressPhotoPop) { suppressPhotoPop = false; return; }
+  if (photoViewerOpen) closePhotoViewer(true);
+});
+$("#note-form")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  if (!noteContext) return;
+  const title = $("#note-title").value.trim();
+  const text = $("#note-text").value.trim();
+  if (!text) { toast("Wpisz treść notatki"); return; }
+  if (noteContext.entryId) {
+    mutatePlant(noteContext.plantId, p => {
+      const entry = (p.journal || []).find(e => e.id === noteContext.entryId);
+      if (entry) {
+        entry.title = title;
+        entry.text = text;
+        entry.updatedAt = Date.now();
+      }
+    });
+    toast("📝 Zaktualizowano notatkę");
+  } else {
+    addJournal(noteContext.plantId, { type: "note", title, text });
+    toast("📝 Dodano notatkę");
+  }
+  const plantId = noteContext.plantId;
+  closeNoteModal();
+  openDetail(plantId);
+});
 
 // ============ START ============
 function init() {
