@@ -17,6 +17,11 @@ const store = {
     return u.date === today ? u : { date: today, identify: 0, diseases: 0, remaining: null };
   },
   set usage(v) { localStorage.setItem("pa_usage", JSON.stringify(v)); },
+  get rooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); },
+  set rooms(v) {
+    localStorage.setItem("pa_rooms", JSON.stringify(v));
+    window.dispatchEvent(new CustomEvent("pa:change"));
+  },
 };
 
 const DAILY_QUOTA = 500;
@@ -59,6 +64,87 @@ function toast(msg) {
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 
+// ============ POKOJE ============
+const DEFAULT_HOME_ID = "default";
+const DEFAULT_ROOM_ID = "default-room";
+const DEFAULT_ROOM_NAME = "Domyślny pokój";
+
+function normalizeRoom(room, fallback = {}) {
+  const now = Date.now();
+  return {
+    id: String(room?.id || fallback.id || uid()),
+    homeId: String(room?.homeId || room?.home_id || fallback.homeId || DEFAULT_HOME_ID),
+    name: String(room?.name || fallback.name || DEFAULT_ROOM_NAME).trim() || DEFAULT_ROOM_NAME,
+    isDefault: Boolean(room?.isDefault || room?.is_default || fallback.isDefault),
+    createdAt: Number(room?.createdAt || room?.created_at || fallback.createdAt || now),
+    updatedAt: Number(room?.updatedAt || room?.updated_at || fallback.updatedAt || now),
+  };
+}
+function defaultRoom(homeId = DEFAULT_HOME_ID) {
+  return normalizeRoom({ id: DEFAULT_ROOM_ID, homeId, name: DEFAULT_ROOM_NAME, isDefault: true });
+}
+function getPlantRoomId(p) { return p.roomId || p.room_id || DEFAULT_ROOM_ID; }
+function applyPlantRoom(p, roomId) { p.roomId = roomId; p.room_id = roomId; }
+function normalizeRoomsAndPlants({ persist = false } = {}) {
+  const plants = store.plants;
+  let rooms = store.rooms.map(r => normalizeRoom(r));
+  let roomsChanged = false, plantsChanged = false;
+  if (!rooms.length) { rooms = [defaultRoom()]; roomsChanged = true; }
+  if (!rooms.some(r => r.isDefault)) { rooms[0].isDefault = true; roomsChanged = true; }
+  const defaultId = (rooms.find(r => r.isDefault) || rooms[0]).id;
+  const validRoomIds = new Set(rooms.map(r => r.id));
+  plants.forEach(p => {
+    const roomId = getPlantRoomId(p);
+    if (!validRoomIds.has(roomId)) {
+      applyPlantRoom(p, defaultId);
+      p.updatedAt = Date.now();
+      plantsChanged = true;
+    } else if (p.roomId !== roomId || p.room_id !== roomId) {
+      applyPlantRoom(p, roomId);
+      plantsChanged = true;
+    }
+  });
+  if (persist) {
+    if (roomsChanged) store.rooms = rooms;
+    if (plantsChanged) store.plants = plants;
+  }
+  return { rooms, plants, defaultId };
+}
+function addRoom(homeId = DEFAULT_HOME_ID, name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę pokoju"); return null; }
+  const rooms = store.rooms.map(r => normalizeRoom(r));
+  const room = normalizeRoom({ homeId, name: trimmed, isDefault: false });
+  rooms.push(room);
+  store.rooms = rooms;
+  renderPlants();
+  return room;
+}
+function renameRoom(roomId, name) {
+  const trimmed = String(name || "").trim();
+  if (!trimmed) { toast("Podaj nazwę pokoju"); return false; }
+  const rooms = store.rooms.map(r => normalizeRoom(r));
+  const room = rooms.find(r => r.id === roomId);
+  if (!room) return false;
+  room.name = trimmed;
+  room.updatedAt = Date.now();
+  store.rooms = rooms;
+  renderPlants();
+  return true;
+}
+function deleteRoom(roomId) {
+  const { rooms, plants } = normalizeRoomsAndPlants({ persist: true });
+  const room = rooms.find(r => r.id === roomId);
+  if (!room || room.isDefault) { toast("Nie można usunąć pokoju domyślnego"); return false; }
+  if (plants.some(p => getPlantRoomId(p) === roomId)) { toast("Usuń lub przenieś rośliny z pokoju"); return false; }
+  store.rooms = rooms.filter(r => r.id !== roomId);
+  renderPlants();
+  return true;
+}
+window.addRoom = addRoom;
+window.renameRoom = renameRoom;
+window.deleteRoom = deleteRoom;
+
 // ============ MIGRACJA v1.0 → v1.1 (history → journal) ============
 (function migrate() {
   const plants = store.plants;
@@ -72,6 +158,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, m => ({ "&": "&amp;
     }
   });
   if (changed) store.plants = plants;
+  normalizeRoomsAndPlants({ persist: true });
 })();
 
 // ============ DZIENNIK ============
@@ -198,9 +285,10 @@ function ringSVG(plant, size = 54) {
 
 // ============ LISTA ROŚLIN (siatka kafli) ============
 function renderPlants() {
-  const plants = store.plants;
-  const list = $("#plants-list"), empty = $("#plants-empty"), banner = $("#due-banner");
+  const { rooms, plants } = normalizeRoomsAndPlants({ persist: true });
+  const list = $("#plants-list"), empty = $("#plants-empty"), banner = $("#due-banner"), toolbar = $("#rooms-toolbar");
   list.innerHTML = "";
+  list.className = "rooms-list";
   empty.classList.toggle("hidden", plants.length > 0);
 
   const due = plants.filter(p => daysUntilWater(p) <= 0);
@@ -216,6 +304,35 @@ function renderPlants() {
   }
 
   banner.classList.add("hidden"); // baner zastąpiony przez Asystenta
+
+  if (toolbar) {
+    toolbar.innerHTML = `
+      <button class="btn btn-primary room-add" id="add-room">+ Pokój</button>
+      <div class="room-chips">
+        ${rooms.map(r => {
+          const count = plants.filter(p => getPlantRoomId(p) === r.id).length;
+          return `<div class="room-chip">
+            <span class="room-chip-name">${esc(r.name)} <small>${count}</small></span>
+            <button class="room-icon" data-room-rename="${esc(r.id)}" aria-label="Zmień nazwę pokoju ${esc(r.name)}">✎</button>
+            ${!r.isDefault && count === 0 ? `<button class="room-icon danger" data-room-delete="${esc(r.id)}" aria-label="Usuń pokój ${esc(r.name)}">✕</button>` : ""}
+          </div>`;
+        }).join("")}
+      </div>`;
+    toolbar.querySelector("#add-room").onclick = () => {
+      const name = prompt("Nazwa pokoju:");
+      const room = addRoom(DEFAULT_HOME_ID, name);
+      if (room) toast("Dodano pokój");
+    };
+    toolbar.querySelectorAll("[data-room-rename]").forEach(btn => btn.onclick = () => {
+      const room = rooms.find(r => r.id === btn.dataset.roomRename);
+      const name = prompt("Nowa nazwa pokoju:", room?.name || "");
+      if (name !== null && renameRoom(btn.dataset.roomRename, name)) toast("Zmieniono nazwę pokoju");
+    });
+    toolbar.querySelectorAll("[data-room-delete]").forEach(btn => btn.onclick = () => {
+      const room = rooms.find(r => r.id === btn.dataset.roomDelete);
+      if (confirm(`Usunąć pusty pokój „${room?.name || ""}”?`) && deleteRoom(btn.dataset.roomDelete)) toast("Usunięto pokój");
+    });
+  }
 
   // Asystent — wnioski z dziennika
   const aBox = $("#assistant-box");
@@ -233,26 +350,41 @@ function renderPlants() {
     }
   }
 
-  plants.slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b)).forEach((p, i) => {
-    const d = daysUntilWater(p);
-    const f = daysUntilFert(p);
-    const diag = lastDiagnosis(p);
-    const recentDiag = diag && (Date.now() - diag.t) < 21 * DAY;
-    const el = document.createElement("div");
-    el.className = "tile" + (d <= 0 ? " tile-due" : "");
-    el.style.animationDelay = (i * 45) + "ms";
-    el.innerHTML = `
-      ${p.photo ? `<img class="tile-photo" src="${p.photo}" alt="" loading="lazy">` : `<div class="tile-photo tile-ph"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>`}
-      <div class="tile-ring">${ringSVG(p, 44)}</div>
-      ${recentDiag ? `<div class="tile-flag" title="${esc(diag.name)}">🩺</div>` : ""}
-      ${f !== null && f <= 0 ? `<div class="tile-flag tile-flag2" title="czas nawieźć">🌿</div>` : ""}
-      <div class="tile-grad"></div>
-      <div class="tile-meta">
-        <div class="tile-name">${esc(p.name)}</div>
-        <div class="tile-due-txt ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "podlej dziś" : "woda za " + d + " dn."}</div>
-      </div>`;
-    el.addEventListener("click", () => openDetail(p.id));
-    list.appendChild(el);
+  rooms.forEach(room => {
+    const roomPlants = plants.filter(p => getPlantRoomId(p) === room.id).slice().sort((a, b) => daysUntilWater(a) - daysUntilWater(b));
+    if (!roomPlants.length) return;
+    const section = document.createElement("section");
+    section.className = "room-section";
+    section.innerHTML = `
+      <div class="room-head">
+        <h2>${esc(room.name)}</h2>
+        <span>${roomPlants.length} ${roomPlants.length === 1 ? "roślina" : roomPlants.length < 5 ? "rośliny" : "roślin"}</span>
+      </div>
+      <div class="plants-list room-grid"></div>`;
+    const grid = section.querySelector(".room-grid");
+    roomPlants.forEach((p, i) => {
+      const d = daysUntilWater(p);
+      const f = daysUntilFert(p);
+      const diag = lastDiagnosis(p);
+      const recentDiag = diag && (Date.now() - diag.t) < 21 * DAY;
+      const el = document.createElement("div");
+      el.className = "tile" + (d <= 0 ? " tile-due" : "");
+      el.style.animationDelay = (i * 45) + "ms";
+      el.innerHTML = `
+        ${p.photo ? `<img class="tile-photo" src="${p.photo}" alt="" loading="lazy">` : `<div class="tile-photo tile-ph"><svg viewBox="0 0 24 24" width="34" height="34"><path d="M12 21 C 5.5 17, 4.5 9.5, 12 3.5 C 19.5 9.5, 18.5 17, 12 21 Z M12 20 L 12 7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div>`}
+        <div class="tile-ring">${ringSVG(p, 44)}</div>
+        ${recentDiag ? `<div class="tile-flag" title="${esc(diag.name)}">🩺</div>` : ""}
+        ${f !== null && f <= 0 ? `<div class="tile-flag tile-flag2" title="czas nawieźć">🌿</div>` : ""}
+        <div class="tile-grad"></div>
+        <div class="tile-meta">
+          <div class="tile-name">${esc(p.name)}</div>
+          <div class="tile-room">${esc(room.name)}</div>
+          <div class="tile-due-txt ${d <= 0 ? "overdue" : ""}">${d <= 0 ? "podlej dziś" : "woda za " + d + " dn."}</div>
+        </div>`;
+      el.addEventListener("click", () => openDetail(p.id));
+      grid.appendChild(el);
+    });
+    list.appendChild(section);
   });
 }
 
@@ -273,6 +405,8 @@ function openDetail(id) {
   const d = daysUntilWater(p);
   const fert = daysUntilFert(p);
   const interval = currentInterval(p);
+  const { rooms } = normalizeRoomsAndPlants({ persist: true });
+  const activeRoomId = getPlantRoomId(p);
   const journal = (p.journal || []).slice().sort((a, b) => b.t - a.t);
 
   // ewolucja: wszystkie zdjęcia w czasie (start + dziennik), chronologicznie
@@ -288,6 +422,13 @@ function openDetail(id) {
         <div class="detail-latin">${esc(p.latin || "")}</div>
         ${care.toxic === true ? `<div style="color:var(--alert);font-size:.8rem;margin-top:4px">⚠️ Toksyczna dla zwierząt</div>` : care.toxic === false ? `<div style="color:var(--leaf);font-size:.8rem;margin-top:4px">✓ Bezpieczna dla zwierząt</div>` : ""}
       </div>
+    </div>
+
+    <div class="card room-select-card">
+      <label for="plant-room" class="sec-k">Pokój</label>
+      <select id="plant-room" class="room-select">
+        ${rooms.map(r => `<option value="${esc(r.id)}" ${r.id === activeRoomId ? "selected" : ""}>${esc(r.name)}</option>`).join("")}
+      </select>
     </div>
 
     <div class="water-block">
@@ -363,6 +504,11 @@ function openDetail(id) {
     <button class="btn btn-danger btn-block" id="delete-plant">Usuń roślinę</button>
   `;
 
+  $("#plant-room").onchange = (e) => {
+    mutatePlant(id, p => applyPlantRoom(p, e.target.value));
+    toast("Przeniesiono roślinę");
+    openDetail(id);
+  };
   $("#water-now").onclick = () => { addJournal(id, { type: "water" }); toast("💧 Zapisano podlewanie"); openDetail(id); };
   const fertBtn = $("#fert-now");
   if (fertBtn) fertBtn.onclick = () => { addJournal(id, { type: "fert" }); toast("🌿 Zapisano nawożenie"); openDetail(id); };
@@ -401,7 +547,15 @@ function openDetail(id) {
 function mutatePlant(id, fn) {
   const plants = store.plants;
   const p = plants.find(x => x.id === id);
-  if (p) { fn(p); p.updatedAt = Date.now(); store.plants = plants; }
+  if (p) {
+    fn(p);
+    const { rooms, defaultId } = normalizeRoomsAndPlants();
+    const validRoomIds = new Set(rooms.map(r => r.id));
+    if (!validRoomIds.has(getPlantRoomId(p))) applyPlantRoom(p, defaultId);
+    else applyPlantRoom(p, getPlantRoomId(p));
+    p.updatedAt = Date.now();
+    store.plants = plants;
+  }
 }
 
 // ============ ZDJĘCIA ============
@@ -495,8 +649,10 @@ function renderScanResults(results) {
 
 function addPlant(latin, displayName) {
   const name = prompt("Nazwa rośliny (np. „Monstera w salonie”):", displayName) || displayName;
+  const { defaultId } = normalizeRoomsAndPlants({ persist: true });
   const plants = store.plants;
-  plants.push({ id: uid(), name, latin, photo: scanThumb, added: Date.now(), updatedAt: Date.now(), lastWatered: Date.now(), journal: [{ t: Date.now(), type: "added" }] });
+  const now = Date.now();
+  plants.push({ id: uid(), name, latin, photo: scanThumb, added: now, updatedAt: now, lastWatered: now, roomId: defaultId, room_id: defaultId, journal: [{ t: now, type: "added" }] });
   store.plants = plants;
   toast("🪴 Dodano: " + name);
   scanBlob = null; scanThumb = null;
@@ -636,7 +792,7 @@ $("#save-key").addEventListener("click", () => {
 });
 
 $("#export-btn").addEventListener("click", () => {
-  const blob = new Blob([JSON.stringify({ plants: store.plants, exported: new Date().toISOString(), version: "1.1" }, null, 2)], { type: "application/json" });
+  const blob = new Blob([JSON.stringify({ plants: store.plants, rooms: store.rooms, exported: new Date().toISOString(), version: "1.2" }, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = "plantapp-backup-" + new Date().toISOString().slice(0, 10) + ".json";
@@ -647,7 +803,9 @@ $("#import-file").addEventListener("change", async (e) => {
   try {
     const data = JSON.parse(await f.text());
     if (!Array.isArray(data.plants)) throw 0;
+    if (Array.isArray(data.rooms)) store.rooms = data.rooms.map(r => normalizeRoom(r));
     store.plants = data.plants;
+    normalizeRoomsAndPlants({ persist: true });
     toast("Zaimportowano " + data.plants.length + " roślin");
     goto("plants");
   } catch { toast("Nieprawidłowy plik kopii"); }

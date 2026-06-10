@@ -105,18 +105,43 @@
   }
 
   // ---------- SYNC ----------
+  const ROOMS_SYNC_ID = "__plantapp_rooms__";
   function localPlants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); }
-  function saveLocal(plants) { localStorage.setItem("pa_plants", JSON.stringify(plants)); if (typeof renderPlants === "function") renderPlants(); }
+  function localRooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); }
+  function saveLocal(plants, rooms = null) {
+    localStorage.setItem("pa_plants", JSON.stringify(plants));
+    if (rooms) localStorage.setItem("pa_rooms", JSON.stringify(rooms));
+    if (typeof normalizeRoomsAndPlants === "function") normalizeRoomsAndPlants({ persist: true });
+    if (typeof renderPlants === "function") renderPlants();
+  }
+  function normalizePlantForCloud(p) {
+    const copy = { ...p };
+    const roomId = copy.roomId || copy.room_id;
+    if (roomId) { copy.roomId = roomId; copy.room_id = roomId; }
+    return copy;
+  }
+  function normalizeRoomsForCloud(rooms) {
+    return typeof normalizeRoom === "function" ? rooms.map(r => normalizeRoom(r)) : rooms;
+  }
 
   async function pushAll() {
     if (!user) return;
-    const plants = localPlants();
+    if (typeof normalizeRoomsAndPlants === "function") normalizeRoomsAndPlants({ persist: true });
+    const plants = localPlants().map(normalizePlantForCloud);
+    const rooms = normalizeRoomsForCloud(localRooms());
     const rows = plants.map(p => ({
       id: p.id,
       user_id: user.id,
       data: p,
       updated_at: new Date(p.updatedAt || p.added || Date.now()).toISOString(),
     }));
+    const roomsUpdatedAt = Math.max(0, ...rooms.map(r => r.updatedAt || r.updated_at || 0));
+    rows.push({
+      id: ROOMS_SYNC_ID,
+      user_id: user.id,
+      data: { type: "rooms", rooms },
+      updated_at: new Date(roomsUpdatedAt || Date.now()).toISOString(),
+    });
     tombs.list.forEach(id => rows.push({ id, user_id: user.id, data: { deleted: true }, updated_at: new Date().toISOString() }));
     if (!rows.length) return;
     const { error } = await sb.from("plants").upsert(rows, { onConflict: "id" });
@@ -133,10 +158,20 @@
     const local = localPlants();
     const byId = Object.fromEntries(local.map(p => [p.id, p]));
     let changed = false;
+    let roomsChanged = false;
+    let rooms = localRooms();
+    const localRoomsT = Math.max(0, ...rooms.map(r => r.updatedAt || r.updated_at || 0));
     const deadHere = new Set(tombs.list);
 
     for (const row of rows || []) {
       const remoteT = new Date(row.updated_at).getTime();
+      if (row.id === ROOMS_SYNC_ID || row.data?.type === "rooms") {
+        if (Array.isArray(row.data?.rooms) && remoteT > localRoomsT) {
+          rooms = normalizeRoomsForCloud(row.data.rooms);
+          roomsChanged = true;
+        }
+        continue;
+      }
       const mine = byId[row.id];
       const mineT = mine ? (mine.updatedAt || mine.added || 0) : 0;
       if (row.data && row.data.deleted) {
@@ -144,9 +179,9 @@
         continue;
       }
       if (deadHere.has(row.id)) continue; // lokalnie usunięta, tombstone poleci przy push
-      if (!mine || remoteT > mineT) { byId[row.id] = row.data; changed = true; }
+      if (!mine || remoteT > mineT) { byId[row.id] = normalizePlantForCloud(row.data); changed = true; }
     }
-    if (changed) saveLocal(Object.values(byId));
+    if (changed || roomsChanged) saveLocal(Object.values(byId), roomsChanged ? rooms : null);
   }
 
   async function fullSync(manual) {
