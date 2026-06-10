@@ -15,24 +15,136 @@ if (!TOKEN || !TOKEN.startsWith("sbp_")) {
 }
 
 const SQL = `
+create table if not exists public.homes (
+  id text primary key,
+  owner_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  address text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.home_members (
+  home_id text not null references public.homes(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  role text not null default 'member',
+  created_at timestamptz not null default now(),
+  primary key (home_id, user_id)
+);
+
+create table if not exists public.rooms (
+  id text primary key,
+  home_id text not null references public.homes(id) on delete cascade,
+  name text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.plants (
   id text primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
+  home_id text references public.homes(id) on delete set null,
+  room_id text references public.rooms(id) on delete set null,
   data jsonb not null,
   updated_at timestamptz not null default now()
 );
+
+alter table public.plants add column if not exists home_id text references public.homes(id) on delete set null;
+alter table public.plants add column if not exists room_id text references public.rooms(id) on delete set null;
+
+create or replace view public.places with (security_invoker = true) as select * from public.homes;
+
+alter table public.homes enable row level security;
+alter table public.home_members enable row level security;
+alter table public.rooms enable row level security;
 alter table public.plants enable row level security;
 
-drop policy if exists "plants_select_own" on public.plants;
-create policy "plants_select_own" on public.plants for select using (auth.uid() = user_id);
-drop policy if exists "plants_insert_own" on public.plants;
-create policy "plants_insert_own" on public.plants for insert with check (auth.uid() = user_id);
-drop policy if exists "plants_update_own" on public.plants;
-create policy "plants_update_own" on public.plants for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
-drop policy if exists "plants_delete_own" on public.plants;
-create policy "plants_delete_own" on public.plants for delete using (auth.uid() = user_id);
+create or replace function public.is_home_member(home_id_arg text, user_id_arg uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists (
+    select 1
+    from public.homes h
+    where h.id = home_id_arg
+      and (
+        h.owner_id = user_id_arg
+        or exists (
+          select 1 from public.home_members hm
+          where hm.home_id = home_id_arg and hm.user_id = user_id_arg
+        )
+      )
+  );
+$$;
 
+drop policy if exists "homes_select_member" on public.homes;
+create policy "homes_select_member" on public.homes for select using (public.is_home_member(id, auth.uid()));
+drop policy if exists "homes_insert_owner" on public.homes;
+create policy "homes_insert_owner" on public.homes for insert with check (auth.uid() = owner_id);
+drop policy if exists "homes_update_owner" on public.homes;
+create policy "homes_update_owner" on public.homes for update using (auth.uid() = owner_id) with check (auth.uid() = owner_id);
+drop policy if exists "homes_delete_owner" on public.homes;
+create policy "homes_delete_owner" on public.homes for delete using (auth.uid() = owner_id);
+
+drop policy if exists "home_members_select_member" on public.home_members;
+create policy "home_members_select_member" on public.home_members for select using (public.is_home_member(home_id, auth.uid()));
+drop policy if exists "home_members_insert_owner" on public.home_members;
+create policy "home_members_insert_owner" on public.home_members for insert with check (
+  exists (select 1 from public.homes h where h.id = home_id and h.owner_id = auth.uid())
+);
+drop policy if exists "home_members_update_owner" on public.home_members;
+create policy "home_members_update_owner" on public.home_members for update using (
+  exists (select 1 from public.homes h where h.id = home_id and h.owner_id = auth.uid())
+) with check (
+  exists (select 1 from public.homes h where h.id = home_id and h.owner_id = auth.uid())
+);
+drop policy if exists "home_members_delete_owner" on public.home_members;
+create policy "home_members_delete_owner" on public.home_members for delete using (
+  exists (select 1 from public.homes h where h.id = home_id and h.owner_id = auth.uid())
+);
+
+drop policy if exists "rooms_select_member" on public.rooms;
+create policy "rooms_select_member" on public.rooms for select using (public.is_home_member(home_id, auth.uid()));
+drop policy if exists "rooms_insert_member" on public.rooms;
+create policy "rooms_insert_member" on public.rooms for insert with check (public.is_home_member(home_id, auth.uid()));
+drop policy if exists "rooms_update_member" on public.rooms;
+create policy "rooms_update_member" on public.rooms for update using (public.is_home_member(home_id, auth.uid())) with check (public.is_home_member(home_id, auth.uid()));
+drop policy if exists "rooms_delete_member" on public.rooms;
+create policy "rooms_delete_member" on public.rooms for delete using (public.is_home_member(home_id, auth.uid()));
+
+drop policy if exists "plants_select_own" on public.plants;
+drop policy if exists "plants_insert_own" on public.plants;
+drop policy if exists "plants_update_own" on public.plants;
+drop policy if exists "plants_delete_own" on public.plants;
+drop policy if exists "plants_select_home_member" on public.plants;
+create policy "plants_select_home_member" on public.plants for select using (
+  auth.uid() = user_id or (home_id is not null and public.is_home_member(home_id, auth.uid()))
+);
+drop policy if exists "plants_insert_home_member" on public.plants;
+create policy "plants_insert_home_member" on public.plants for insert with check (
+  auth.uid() = user_id and (home_id is null or public.is_home_member(home_id, auth.uid()))
+);
+drop policy if exists "plants_update_home_member" on public.plants;
+create policy "plants_update_home_member" on public.plants for update using (
+  auth.uid() = user_id or (home_id is not null and public.is_home_member(home_id, auth.uid()))
+) with check (
+  auth.uid() = user_id or (home_id is not null and public.is_home_member(home_id, auth.uid()))
+);
+drop policy if exists "plants_delete_home_member" on public.plants;
+create policy "plants_delete_home_member" on public.plants for delete using (
+  auth.uid() = user_id or (home_id is not null and public.is_home_member(home_id, auth.uid()))
+);
+
+create index if not exists homes_owner_idx on public.homes(owner_id);
+create index if not exists home_members_user_idx on public.home_members(user_id);
+create index if not exists rooms_home_idx on public.rooms(home_id);
 create index if not exists plants_user_idx on public.plants(user_id);
+create index if not exists plants_home_idx on public.plants(home_id);
+create index if not exists plants_room_idx on public.plants(room_id);
 `;
 
 async function api(path, opts = {}) {
@@ -85,7 +197,7 @@ const genPass = () => "Pa_" + [...crypto.getRandomValues(new Uint8Array(18))].ma
 
   console.log("→ Zakładam schemat + RLS…");
   await api(`/v1/projects/${ref}/database/query`, { method: "POST", body: JSON.stringify({ query: SQL }) });
-  console.log("  ✓ Tabela public.plants z politykami RLS");
+  console.log("  ✓ Tabele public.homes, public.rooms i public.plants z politykami RLS");
 
   console.log("→ Włączam auto-potwierdzanie e-maili (bez klikania w linki)…");
   await api(`/v1/projects/${ref}/config/auth`, { method: "PATCH", body: JSON.stringify({ mailer_autoconfirm: true }) });

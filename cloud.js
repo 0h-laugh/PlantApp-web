@@ -106,30 +106,89 @@
 
   // ---------- SYNC ----------
   function localPlants() { return JSON.parse(localStorage.getItem("pa_plants") || "[]"); }
-  function saveLocal(plants) { localStorage.setItem("pa_plants", JSON.stringify(plants)); if (typeof renderPlants === "function") renderPlants(); }
+  function localHomes() { return JSON.parse(localStorage.getItem("pa_homes") || "[]"); }
+  function localRooms() { return JSON.parse(localStorage.getItem("pa_rooms") || "[]"); }
+  function saveLocal(plants) {
+    localStorage.setItem("pa_plants", JSON.stringify(plants));
+    if (typeof ensureDefaultPlace === "function") ensureDefaultPlace();
+    if (typeof renderPlants === "function") renderPlants();
+  }
+  function saveLocalPlaces(homes, rooms) {
+    localStorage.setItem("pa_homes", JSON.stringify(homes));
+    localStorage.setItem("pa_rooms", JSON.stringify(rooms));
+    if (typeof ensureDefaultPlace === "function") ensureDefaultPlace();
+  }
 
   async function pushAll() {
     if (!user) return;
+    if (typeof ensureDefaultPlace === "function") ensureDefaultPlace();
+    const homes = localHomes().map(h => ({
+      id: h.id,
+      owner_id: user.id,
+      name: h.name || "Mój dom",
+      address: h.address || null,
+      created_at: new Date(h.createdAt || h.updatedAt || Date.now()).toISOString(),
+      updated_at: new Date(h.updatedAt || h.createdAt || Date.now()).toISOString(),
+    }));
+    if (homes.length) {
+      const { error } = await sb.from("homes").upsert(homes, { onConflict: "id" });
+      if (error) { setStatus("Błąd wysyłki miejsc: " + error.message, true); return; }
+    }
+    const rooms = localRooms().map(r => ({
+      id: r.id,
+      home_id: r.homeId,
+      name: r.name || "Bez pokoju",
+      sort_order: r.sortOrder || 0,
+      created_at: new Date(r.createdAt || r.updatedAt || Date.now()).toISOString(),
+      updated_at: new Date(r.updatedAt || r.createdAt || Date.now()).toISOString(),
+    }));
+    if (rooms.length) {
+      const { error } = await sb.from("rooms").upsert(rooms, { onConflict: "id" });
+      if (error) { setStatus("Błąd wysyłki pokoi: " + error.message, true); return; }
+    }
     const plants = localPlants();
     const rows = plants.map(p => ({
       id: p.id,
       user_id: user.id,
+      home_id: p.homeId || null,
+      room_id: p.roomId || null,
       data: p,
       updated_at: new Date(p.updatedAt || p.added || Date.now()).toISOString(),
     }));
     tombs.list.forEach(id => rows.push({ id, user_id: user.id, data: { deleted: true }, updated_at: new Date().toISOString() }));
-    if (!rows.length) return;
-    const { error } = await sb.from("plants").upsert(rows, { onConflict: "id" });
-    if (error) { setStatus("Błąd wysyłki: " + error.message, true); return; }
+    if (!rows.length && !homes.length && !rooms.length) return;
+    const { error } = rows.length ? await sb.from("plants").upsert(rows, { onConflict: "id" }) : { error: null };
+    if (error) { setStatus("Błąd wysyłki roślin: " + error.message, true); return; }
     tombs.clear();
     setStatus("Zsynchronizowano: " + new Date().toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }));
   }
 
   async function pullMerge() {
     if (!user) return;
-    const { data: rows, error } = await sb.from("plants").select("id,data,updated_at");
-    if (error) { setStatus("Błąd pobierania: " + error.message, true); return; }
+    const { data: homeRows, error: homesError } = await sb.from("homes").select("id,name,address,created_at,updated_at");
+    if (homesError) { setStatus("Błąd pobierania miejsc: " + homesError.message, true); return; }
+    const { data: roomRows, error: roomsError } = await sb.from("rooms").select("id,home_id,name,sort_order,created_at,updated_at");
+    if (roomsError) { setStatus("Błąd pobierania pokoi: " + roomsError.message, true); return; }
+    const { data: rows, error } = await sb.from("plants").select("id,home_id,room_id,data,updated_at");
+    if (error) { setStatus("Błąd pobierania roślin: " + error.message, true); return; }
     lastPull = Date.now();
+
+    const homesById = Object.fromEntries(localHomes().map(h => [h.id, h]));
+    for (const row of homeRows || []) {
+      const remoteT = new Date(row.updated_at).getTime();
+      const mine = homesById[row.id];
+      const mineT = mine ? (mine.updatedAt || mine.createdAt || 0) : 0;
+      if (!mine || remoteT > mineT) homesById[row.id] = { id: row.id, name: row.name, address: row.address || "", createdAt: new Date(row.created_at).getTime(), updatedAt: remoteT };
+    }
+    const roomsById = Object.fromEntries(localRooms().map(r => [r.id, r]));
+    for (const row of roomRows || []) {
+      const remoteT = new Date(row.updated_at).getTime();
+      const mine = roomsById[row.id];
+      const mineT = mine ? (mine.updatedAt || mine.createdAt || 0) : 0;
+      if (!mine || remoteT > mineT) roomsById[row.id] = { id: row.id, homeId: row.home_id, name: row.name, sortOrder: row.sort_order || 0, createdAt: new Date(row.created_at).getTime(), updatedAt: remoteT };
+    }
+    saveLocalPlaces(Object.values(homesById), Object.values(roomsById));
+
     const local = localPlants();
     const byId = Object.fromEntries(local.map(p => [p.id, p]));
     let changed = false;
@@ -144,7 +203,10 @@
         continue;
       }
       if (deadHere.has(row.id)) continue; // lokalnie usunięta, tombstone poleci przy push
-      if (!mine || remoteT > mineT) { byId[row.id] = row.data; changed = true; }
+      if (!mine || remoteT > mineT) {
+        byId[row.id] = { ...row.data, homeId: row.data?.homeId || row.home_id || "", roomId: row.data?.roomId || row.room_id || "" };
+        changed = true;
+      }
     }
     if (changed) saveLocal(Object.values(byId));
   }
@@ -164,6 +226,7 @@
 
   // ---------- ZDARZENIA ----------
   window.addEventListener("pa:change", schedulePush);
+  window.addEventListener("pa:places-change", schedulePush);
   window.addEventListener("pa:delete", (e) => { tombs.add(e.detail); schedulePush(); });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && user && Date.now() - lastPull > 5 * 60000) fullSync(false);
