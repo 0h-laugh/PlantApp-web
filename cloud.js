@@ -187,6 +187,14 @@
     clear() { localStorage.removeItem("pa_place_tombstones"); },
   };
 
+  // usunięte/scalone domy — analogicznie do pokoi (inaczej pull je wskrzesi)
+  const homeTombs = {
+    get list() { return JSON.parse(localStorage.getItem("pa_home_tombstones") || "[]"); },
+    get ids() { return new Set(this.list); },
+    add(id) { const l = this.list; if (!l.includes(id)) { l.push(id); localStorage.setItem("pa_home_tombstones", JSON.stringify(l)); } },
+    clear() { localStorage.removeItem("pa_home_tombstones"); },
+  };
+
   function setStatus(msg, err) {
     const el = document.querySelector("#sync-status");
     if (el) { el.textContent = msg; el.classList.toggle("usage-low", !!err); }
@@ -468,6 +476,12 @@
       const { error } = await sb.from("plants").update(patch).eq("id", id);
       if (error) { setStatus("Błąd wysyłki roślin: " + error.message, true); return; }
     }
+    // usuń scalone/usunięte domy na końcu — pokoje i rośliny zostały już przeniesione do
+    // domu kanonicznego, więc kasowanie nie pociągnie ich kaskadą FK.
+    if (homeTombs.list.length) {
+      const { error } = await sb.from("homes").delete().in("id", homeTombs.list);
+      if (!error) homeTombs.clear();
+    }
     tombs.clear();
     setStatus("Zsynchronizowano: " + new Date().toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit" }));
   }
@@ -482,8 +496,10 @@
     if (error) { setStatus("Błąd pobierania roślin: " + error.message, true); return; }
     lastPull = Date.now();
 
+    const deadHomes = homeTombs.ids;
     const homesById = Object.fromEntries(localHomes().map(h => [h.id, h]));
     for (const row of homeRows || []) {
+      if (deadHomes.has(row.id)) continue; // lokalnie scalony/usunięty dom — delete poleci przy push
       const remoteT = new Date(row.updated_at).getTime();
       const mine = homesById[row.id];
       const mineT = mine ? (mine.updatedAt || mine.createdAt || 0) : 0;
@@ -500,6 +516,7 @@
       if (!mine || remoteT > mineT) roomsById[row.id] = { id: row.id, homeId: row.home_id, name: row.name, sortOrder: row.sort_order || 0, createdAt: new Date(row.created_at).getTime(), updatedAt: remoteT };
     }
     saveLocalPlaces(Object.values(homesById), Object.values(roomsById));
+    if (typeof consolidateHomes === "function") consolidateHomes();
 
     const local = localPlants();
     const byId = Object.fromEntries(local.map(p => [p.id, p]));
@@ -545,7 +562,12 @@
   window.addEventListener("pa:change", schedulePush);
   window.addEventListener("pa:places-change", schedulePush);
   window.addEventListener("pa:delete", (e) => { tombs.add(e.detail); schedulePush(); });
-  window.addEventListener("pa:place-delete", (e) => { if (e.detail?.kind === "room" && e.detail.id) { placeTombs.add(e.detail.id); schedulePush(); } });
+  window.addEventListener("pa:place-delete", (e) => {
+    if (!e.detail?.id) return;
+    if (e.detail.kind === "room") placeTombs.add(e.detail.id);
+    else if (e.detail.kind === "home") homeTombs.add(e.detail.id);
+    schedulePush();
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && user && Date.now() - lastPull > 5 * 60000) fullSync(false);
   });
