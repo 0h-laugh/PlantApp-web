@@ -300,8 +300,52 @@ window.deleteRoom = deleteRoom;
 window.addHome = addHome;
 window.renameHome = renameHome;
 window.movePlantToRoom = movePlantToRoom;
+
+// Scal duplikaty domów o tej samej nazwie (własne) w najstarszy — leczy klasyczny błąd
+// offline-first: dwa urządzenia tworzą własny domyślny „Mój dom" z różnym id, zanim się
+// zsynchronizują, i każde widzi inny zestaw roślin. Deterministyczne (najstarszy createdAt)
+// → wszystkie urządzenia zbiegają się do tego samego domu. Usunięcie leci tombstone'em.
+function consolidateHomes() {
+  const uid = window.PA_USER?.id || null;
+  const homes = store.homes;
+  const groups = {};
+  homes.filter(h => !h.ownerId || h.ownerId === uid).forEach(h => {
+    const key = (h.name || "").trim().toLowerCase();
+    (groups[key] = groups[key] || []).push(h);
+  });
+  const merges = [];
+  for (const key in groups) {
+    const g = groups[key];
+    if (g.length < 2) continue;
+    g.sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0) || String(x.id).localeCompare(String(y.id)));
+    const canon = g[0];
+    g.slice(1).forEach(dup => merges.push({ dup, canon }));
+  }
+  if (!merges.length) return false;
+  const rooms = store.rooms;
+  const plants = store.plants;
+  const removed = new Set();
+  const now = Date.now();
+  merges.forEach(({ dup, canon }) => {
+    rooms.forEach(r => { if (r.homeId === dup.id) { r.homeId = canon.id; r.updatedAt = now; } });
+    plants.forEach(p => { if (p.homeId === dup.id) { p.homeId = canon.id; p.updatedAt = now; } });
+    removed.add(dup.id);
+    if (store.currentHomeId === dup.id) store.currentHomeId = canon.id;
+  });
+  store.rooms = rooms;
+  store.plants = plants;
+  store.homes = homes.filter(h => !removed.has(h.id));
+  const tombKey = "pa_home_tombstones";
+  const tombList = JSON.parse(localStorage.getItem(tombKey) || "[]");
+  removed.forEach(id => { if (!tombList.includes(id)) tombList.push(id); });
+  localStorage.setItem(tombKey, JSON.stringify(tombList));
+  removed.forEach(id => window.dispatchEvent(new CustomEvent("pa:place-delete", { detail: { kind: "home", id } })));
+  return true;
+}
+window.consolidateHomes = consolidateHomes;
 (function migrate() {
   const def = ensureDefaultPlace();
+  consolidateHomes();
   const rooms = store.rooms;
   const plants = store.plants;
   let changed = false;
@@ -624,6 +668,9 @@ function renderAssistantMessages(plantId) {
   if (list) list.scrollTop = list.scrollHeight;
 }
 async function openAssistant(plantId) {
+  // gość bez konta nie ma asystenta (zapis konfiguracji/historii wymaga logowania)
+  const shell = $("#plant-assistant-shell");
+  if (!window.PA_USER) { if (shell) { shell.classList.add("hidden"); shell.innerHTML = ""; } return; }
   activeAssistantPlantId = plantId;
   assistantCloudWarn = "";
   renderAssistantMessages(plantId);
@@ -1673,6 +1720,22 @@ $("#note-form")?.addEventListener("submit", (e) => {
 });
 
 // ============ START ============
+// Tryb gościa (bez konta): ukryj karty ustawień zależne od konta — gość nie skonfiguruje
+// klucza Pl@ntNet ani asystenta (zapis wymaga logowania), więc te karty tylko myliłyby i
+// otwierały drogę do nadużyć. Zostaje wygląd, logowanie, przypomnienia i licznik lokalny.
+function updateAuthGatedUI() {
+  const isGuest = !window.PA_USER;
+  [
+    document.querySelector("#api-key")?.closest(".card"),
+    document.querySelector("#assistant-provider")?.closest(".card"),
+    document.querySelector("#invite-card-body")?.closest(".card"),
+  ].forEach(card => { if (card) card.classList.toggle("hidden", isGuest); });
+  // asystent rośliny w szczegółach też wymaga konta + konfiguracji
+  const shell = document.querySelector("#plant-assistant-shell");
+  if (shell && isGuest) shell.classList.add("hidden");
+}
+window.addEventListener("pa:user", updateAuthGatedUI);
+
 function init() {
   const intro = $("#leaf-intro");
   if (intro) {
@@ -1680,6 +1743,7 @@ function init() {
     else { sessionStorage.setItem("pa_intro", "1"); setTimeout(() => intro.remove(), 2400); }
   }
   document.body.classList.toggle("on-plants", currentView === "plants");
+  updateAuthGatedUI();
   refreshApiKeyField();
   refreshAssistantConfigCard();
   $("#home-select")?.addEventListener("change", (e) => {
